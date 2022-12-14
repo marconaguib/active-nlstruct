@@ -559,7 +559,7 @@ def multi_dim_topk(x, topk, mask=None, dim=0):
     top_indices = []
     for dim_size in reversed(x.shape[dim:]):
         top_indices.insert(0, flat_top_indices % dim_size)
-        flat_top_indices = flat_top_indices // dim_size
+        flat_top_indices = torch.div(flat_top_indices,dim_size,rounding_mode='floor')
     if mask is not None:
         top_mask = mask[(*(
             torch.arange(n).view(*unsqueeze_around(top_indices[0].ndim, i))
