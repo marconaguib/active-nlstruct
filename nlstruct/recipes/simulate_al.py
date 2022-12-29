@@ -16,6 +16,7 @@ from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
 
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
+from torchmetrics import F1Score
 
 def isnotebook():
     try:
@@ -37,7 +38,7 @@ shared_cache = {}
 
 BASE_WORD_REGEX = r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|}~]'
 BASE_SENTENCE_REGEX = r"((?:\s*\n)+\s*|(?:(?<=[\w0-9]{2,}\.|[)]\.)\s+))(?=[[:upper:]]|•|\n)"
-ENTITIES = ['AdministrationRoute','Anatomy','Aspect','Assertion','BiologicalProcessOrFunction','Chemicals_Drugs','Concept_Idea','Devices','Disorder','Dosage','DrugForm','Genes_Proteins','Hospital','LivingBeings','Localization','Measurement','MedicalProcedure','papieralettre','Persons','signature','SignOrSymptom','Strength','Temporal']
+ENTITIES = ['AdministrationRoute','Anatomy','Aspect','Assertion','BiologicalProcessOrFunction','Chemicals_Drugs','Concept_Idea','Devices','Disorder','Dosage','DrugForm','Genes_Proteins','Hospital','LivingBeings','Localization','Measurement','MedicalProcedure','Persons','SignOrSymptom','Strength','Temporal']
 
 class EmissionMonitoringCallback(pl.Callback):
     def __init__(self, num_train_epochs):    
@@ -117,12 +118,9 @@ def simulate_al(
         word_regex = BASE_WORD_REGEX
         sentence_split_regex = BASE_SENTENCE_REGEX
         metrics = {
-            "exact": dict(module="dem", binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=word_regex),
-            "partial": dict(module="dem", binarize_tag_threshold=1e-5, binarize_label_threshold=1., word_regex=word_regex),
-        } | {
-        k: dict(module="dem", filter_entities=(k), binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=word_regex)
-        for k in ENTITIES
-        }
+            "exact": dict(module="tw_dem", binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=word_regex, return_metric_per_label=ENTITIES[:3]),
+            #"partial": dict(module="tw_dem", binarize_tag_threshold=1e-5, binarize_label_threshold=1., word_regex=word_regex, return_metric_per_label=ENTITIES[:5]),
+        } 
     else:
         raise Exception("dataset must be a dict or a str")
 
@@ -265,7 +263,7 @@ def simulate_al(
                        EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                        ManagingConfidenceMeasuresCallback()],
             logger=[
-                pl.loggers.TestTubeLogger("logs", name='{hashkey}-{global_step:05d}' if not xp_name else xp_name + '-{hashkey}-{global_step:05d}'),
+                pl.loggers.TestTubeLogger("logs", name=xp_name if xp_name is not None else "untitled_experience"),
                 RichTableLogger(key="epoch", fields={
                     "epoch": {},
                     "step": {},
@@ -274,8 +272,7 @@ def simulate_al(
                     "(.*)_precision": False,  # {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_p"},
                     "(.*)_recall": False,  # {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_r"},
                     "(.*)_tp": False,
-                    "(.*)_f1(?!val_exact_f1)": False,  #{"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
-                    "(.*)exact_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
+                    "(.*)_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
 
                     ".*_lr|max_grad": {"format": "{:.2e}"},
                     "duration": {"format": "{:.0f}", "name": "dur(s)"},
@@ -299,15 +296,6 @@ def simulate_al(
 
             final_metrics = MetricsCollection({
                 **{metric_name: get_instance(metric_config) for metric_name, metric_config in metrics.items()},
-                **{
-                    metric_name: get_instance(metric_config)
-                    for label in model.preprocessor.vocabularies['entity_label'].values
-                    for metric_name, metric_config in
-                    {
-                        f"{label}_exact": dict(module="dem", binarize_tag_threshold=1., binarize_label_threshold=1., filter_entities=[label], word_regex=word_regex),
-                        f"{label}_partial": dict(module="dem", binarize_tag_threshold=1e-5, binarize_label_threshold=1., filter_entities=[label], word_regex=word_regex),
-                    }.items()
-                }
             })
 
             results = final_metrics(list(model.predict(eval_data)), eval_data)

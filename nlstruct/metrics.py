@@ -296,3 +296,248 @@ class DocumentEntityMetric(Metric):
             self.prefix + "recall": self.true_positive / max(1, self.gold_count),
             self.prefix + "f1": (self.true_positive * 2) / (self.pred_count + self.gold_count),
         }
+
+
+@register("tw_dem")
+class Typewise_DocumentEntityMetric(Metric):
+    def __init__(
+          self,
+          return_metric_per_label=None,
+          word_regex=r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|}~]',
+          filter_entities=None,
+          joint_matching=False,
+          binarize_label_threshold=1.,
+          binarize_tag_threshold=0.5,
+          eval_attributes=False,
+          eval_fragments_label=False,
+          compute_on_step=True,
+          dist_sync_on_step=False,
+          process_group=None,
+          dist_sync_fn=None,
+          explode_fragments=False,
+          prefix="",
+    ):
+        super().__init__(
+            compute_on_step=compute_on_step,
+            dist_sync_on_step=dist_sync_on_step,
+            process_group=process_group,
+            dist_sync_fn=dist_sync_fn,
+        )
+
+        self.joint_matching = joint_matching
+        self.filter_entities = filter_entities
+        self.prefix = prefix
+        self.eval_attributes = eval_attributes
+        self.eval_fragments_label = eval_fragments_label
+        self.explode_fragments = explode_fragments
+        self.word_regex = word_regex
+        self.return_metric_per_label = return_metric_per_label if return_metric_per_label is not None else []
+        self.binarize_label_threshold = float(binarize_label_threshold) if binarize_label_threshold is not False else binarize_label_threshold
+        self.binarize_tag_threshold = float(binarize_tag_threshold) if binarize_tag_threshold is not False else binarize_tag_threshold
+        self.add_state(f"true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state(f"pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state(f"gold_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+        for label in self.return_metric_per_label:
+           self.add_state(f"{label}_true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
+           self.add_state(f"{label}_pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+           self.add_state(f"{label}_gold_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+
+    def increment(self, name, by=1):
+        """Increments a counter specified by the 'name' argument."""
+        self.__dict__[name] += by
+   
+    def update(self, preds, targets):
+        """
+        Update state with predictions and targets.
+
+        Args:
+            preds: Predictions from model
+            target: Ground truth values
+        """
+
+        for pred_doc, gold_doc in zip(preds, targets):
+            for label,(tp, pc, gc) in self.compare_two_samples(pred_doc, gold_doc).items():
+                self.increment(f"true_positive", by=tp)
+                self.increment(f"pred_count", by=pc)
+                self.increment(f"gold_count", by=gc)
+                if label in self.return_metric_per_label:
+                    self.increment(f"{label}_true_positive", by=tp)
+                    self.increment(f"{label}_pred_count", by=pc)
+                    self.increment(f"{label}_gold_count", by=gc)
+
+    def compare_two_samples(self, pred_doc, gold_doc, return_match_scores=False):
+        assert pred_doc["text"] == gold_doc["text"]
+        pred_doc_entities = list(pred_doc["entities"])
+        gold_doc_entities = list(gold_doc["entities"])
+
+        pred_doc_entities = [entity for entity in pred_doc_entities
+                             if self.filter_entities is None
+                             or entity_match_filter(entity["label"], self.filter_entities)]
+        gold_doc_entities = [entity for entity in gold_doc_entities
+                             if self.filter_entities is None
+                             or entity_match_filter(entity["label"], self.filter_entities)]
+        if self.explode_fragments:
+            pred_doc_entities = [{"label": f.get("label", "main"), "fragments": [f]} for f in
+                                 dedup((f for entity in pred_doc_entities for f in entity["fragments"]), key=lambda x: (x['begin'], x['end'], x.get('label', None)))]
+            gold_doc_entities = [{"label": f.get("label", "main"), "fragments": [f]} for f in
+                                 dedup((f for entity in gold_doc_entities for f in entity["fragments"]), key=lambda x: (x['begin'], x['end'], x.get('label', None)))]
+
+        words = regex_tokenize(gold_doc["text"], reg=self.word_regex, do_unidecode=True, return_offsets_mapping=
+True)
+
+        all_fragment_labels = set()
+        all_entity_labels = set()
+        fragments_begin = []
+        fragments_end = []
+        pred_entities_fragments = []
+        for entity in pred_doc_entities:
+            all_entity_labels.update(set(entity["label"] if isinstance(entity["label"], (tuple, list)) else (entity["label"],)))
+            #                                          *(("{}:{}".format(att["name"], att["label"]) for att in entity["attributes"]) if self.eval_attributes else ()))))
+            pred_entities_fragments.append([])
+            for fragment in entity["fragments"]:
+                pred_entities_fragments[-1].append(len(fragments_begin))
+                fragments_begin.append(fragment["begin"])
+                fragments_end.append(fragment["end"])
+                all_fragment_labels.add(fragment["label"] if self.eval_fragments_label else "main")
+
+        gold_entities_fragments = []
+        for entity in gold_doc_entities:
+            all_entity_labels.update(set(entity["label"] if isinstance(entity["label"], (tuple, list)) else (entity["label"],)))
+            #                                          *(("{}:{}".format(att["name"], att["value"]) for att in entity["attributes"]) if self.eval_attributes else ()))))
+            gold_entities_fragments.append([])
+            for fragment in entity["fragments"]:
+                gold_entities_fragments[-1].append(len(fragments_begin))
+                fragments_begin.append(fragment["begin"])
+                fragments_end.append(fragment["end"])
+                all_fragment_labels.add(fragment["label"] if self.eval_fragments_label else "main")
+        all_fragment_labels = list(all_fragment_labels)
+        all_entity_labels = list(all_entity_labels)
+        if len(all_fragment_labels) == 0:
+            all_fragment_labels = ["main"]
+        if len(all_entity_labels) == 0:
+            all_entity_labels = ["main"]
+
+        fragments_begin, fragments_end = split_spans(fragments_begin, fragments_end, words["begin"], words["end"
+])
+        pred_entities_labels = [[False] * len(all_entity_labels)] * max(len(pred_doc_entities), 1)
+        pred_tags = [[[False] * len(words["begin"]) for _ in range(len(all_fragment_labels))] for _ in range(max
+(len(pred_doc_entities), 1))]  # n_entities * n_token_labels * n_tokens
+        gold_entities_labels = [[False] * len(all_entity_labels)] * max(len(gold_doc_entities), 1)
+        gold_entities_optional_labels = [[False] * len(all_entity_labels)] * max(len(gold_doc_entities), 1)
+        gold_tags = [[[False] * len(words["begin"]) for _ in range(len(all_fragment_labels))] for _ in range(max
+(len(gold_doc_entities), 1))]  # n_entities * n_token_labels * n_tokens
+
+        for entity_idx, (entity_fragments, entity) in enumerate(zip(pred_entities_fragments, pred_doc_entities)):
+            for fragment_idx, fragment in zip(entity_fragments, entity["fragments"]):
+                begin = fragments_begin[fragment_idx]
+                end = fragments_end[fragment_idx]
+                label = all_fragment_labels.index(fragment["label"] if self.eval_fragments_label else "main")
+                pred_tags[entity_idx][label][begin:end] = [True] * (end - begin)
+            entity_labels = list(entity["label"] if isinstance(entity["label"], (tuple, list)) else (entity["label"],))
+            # *(("{}:{}".format(att["name"], att["label"]) for att in entity["attributes"]) if self.eval_attributes else ())]
+            pred_entities_labels[entity_idx] = [label in entity_labels for label in all_entity_labels]
+
+        for entity_idx, (entity_fragments, entity) in enumerate(zip(gold_entities_fragments, gold_doc_entities)):
+            for fragment_idx, fragment in zip(entity_fragments, entity["fragments"]):
+                begin = fragments_begin[fragment_idx]
+                end = fragments_end[fragment_idx]
+                label = all_fragment_labels.index(fragment["label"] if self.eval_fragments_label else "main")
+                gold_tags[entity_idx][label][begin:end] = [True] * (end - begin)
+            entity_labels = list(entity["label"] if isinstance(entity["label"], (tuple, list)) else (entity["label"],))
+            entity_optional_labels = entity.get("complete_labels", entity["label"])
+            if not isinstance(entity_optional_labels, (tuple, list)):
+                entity_optional_labels = [entity_optional_labels]
+            # *(("{}:{}".format(att["name"], att["value"]) for att in entity["attributes"]) if self.eval_attributes else ())]
+            gold_entities_labels[entity_idx] = [label in entity_labels for label in all_entity_labels]
+            gold_entities_optional_labels[entity_idx] = [label in entity_optional_labels for label in all_entity_labels]
+
+        gold_tags = pad_to_tensor(gold_tags)
+        pred_tags = pad_to_tensor(pred_tags)
+        gold_entities_labels = pad_to_tensor(gold_entities_labels)
+        gold_entities_optional_labels = pad_to_tensor(gold_entities_optional_labels)
+        pred_entities_labels = pad_to_tensor(pred_entities_labels)
+
+        # score = 0.
+        tag_denom_match_scores = (
+              pred_tags.float().sum(-1).sum(-1).unsqueeze(1) +
+              gold_tags.float().sum(-1).sum(-1).unsqueeze(0)
+        )
+        tag_match_scores = 2 * torch.einsum("pkt,gkt->pg", pred_tags.float(), gold_tags.float()) / tag_denom_match_scores.clamp_min(1)
+        #tag_match_scores[(tag_denom_match_scores == 0.) & (tag_match_scores == 0.)] = 1.
+
+
+        # tag_denom_match_scores = (
+        #      pred_tags.float().sum(-1).unsqueeze(1) + # pkt -> p:k
+        #      gold_tags.float().sum(-1).unsqueeze(0)   # gkt -> :gk
+        # )
+        # tag_match_scores = (2 * torch.einsum("pkt,gkt->pgk", pred_tags.float(), gold_tags.float()) / tag_denom_match_scores.clamp_min(1)) > 0.5
+        # tag_match_scores[tag_denom_match_scores == 0.] = 1.
+
+        # label_match_scores = 2 * torch.einsum("pk,gk->pg", pred_entities_labels.float(), gold_entities_labels.float()) / (
+        #      pred_entities_labels.float().sum(-1).unsqueeze(1) +
+        #      gold_entities_labels.float().sum(-1).unsqueeze(0)
+        # ).clamp_min(1)
+
+        label_match_precision = torch.einsum("pk,gk->pg", pred_entities_labels.float(), gold_entities_optional_labels.float()) / pred_entities_labels.float().sum(-1).unsqueeze(1).clamp_min(1.)
+        label_match_recall = torch.einsum("pk,gk->pg", pred_entities_labels.float(), gold_entities_labels.float()) / gold_entities_labels.float().sum(-1).unsqueeze(0).clamp_min(1.)
+        label_match_scores = 2 / (1. / label_match_precision + 1. / label_match_recall)
+        match_scores = label_match_scores * tag_match_scores
+        if self.binarize_tag_threshold is not False:
+            tag_match_scores = (tag_match_scores >= self.binarize_tag_threshold).float()
+        if self.binarize_label_threshold is not False:
+            label_match_scores = (label_match_scores >= self.binarize_tag_threshold).float()
+        effective_scores = tag_match_scores * label_match_scores
+        
+        results={}
+        
+        pred_values = [p['label'] for p in pred_doc_entities]
+        gold_values = [g['label'] for g in gold_doc_entities]
+        
+        score_per_label = {l:0. for l in all_entity_labels}
+        matched_scores = torch.zeros_like(match_scores) - 1.
+        for pred_idx in range(match_scores.shape[0]):
+            if self.joint_matching:
+                pred_idx = match_scores.max(-1).values.argmax()
+            gold_idx = match_scores[pred_idx].argmax()
+            if not any(gold_entities_labels[gold_idx]):
+                continue
+            ent_label = all_entity_labels[gold_entities_labels[gold_idx].nonzero().squeeze()]
+            match_score = match_scores[pred_idx, gold_idx].float()
+            effective_score = effective_scores[pred_idx, gold_idx].float()
+            matched_scores[pred_idx, gold_idx] = max(matched_scores[pred_idx, gold_idx], effective_score)
+            if match_score >= 0 and effective_score > 0:
+                score_per_label[ent_label] += effective_score
+                match_scores[:, gold_idx] = -1
+                match_scores[pred_idx, :] = -1
+        
+        return {l : (float(score_per_label[l]), pred_values.count(l), gold_values.count(l))
+                    for l in all_entity_labels}
+
+    def compute(self):
+        """
+        Computes accuracy over state.
+        """
+        results={}
+        if self.gold_count == 0 and self.pred_count == 0:
+           results[self.prefix + f"tp"]= 0
+           results[self.prefix + f"precision"]= 1
+           results[self.prefix + f"_recall"]= 1
+           results[self.prefix + f"f1"]= 1
+        else :
+           results[self.prefix + "tp"] = self.true_positive
+           results[self.prefix + "precision"]= self.true_positive / max(1, self.pred_count)
+           results[self.prefix + "recall"]= self.true_positive/ max(1, self.gold_count)
+           results[self.prefix + "f1"]= (self.true_positive * 2) / (self.pred_count + self.gold_count)
+        for label in self.return_metric_per_label:
+            l_true_positive, l_gold_count, l_pred_count = getattr(self, f"{label}_true_positive"), getattr(self, f"{label}_gold_count"), getattr(self, f"{label}_pred_count")
+            if l_gold_count == 0 and l_pred_count == 0:
+               results[self.prefix + f"{label}_tp"]= 0
+               results[self.prefix + f"{label}_precision"]= 1
+               results[self.prefix + f"{label}_recall"]= 1
+               results[self.prefix + f"{label}_f1"]= 1
+            else :
+               results[self.prefix + f"{label}_tp"] = l_true_positive
+               results[self.prefix + f"{label}_precision"]= l_true_positive / max(1, l_pred_count)
+               results[self.prefix + f"{label}_recall"]= l_true_positive/ max(1, l_gold_count)
+               results[self.prefix + f"{label}_f1"]= (l_true_positive * 2) / (l_pred_count + l_gold_count)
+        return results
