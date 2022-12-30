@@ -117,8 +117,7 @@ def simulate_al(
         word_regex = BASE_WORD_REGEX
         sentence_split_regex = BASE_SENTENCE_REGEX
         metrics = {
-            "exact": dict(module="tw_dem", binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=word_regex, return_metric_per_label=ENTITIES[:3]),
-            #"partial": dict(module="tw_dem", binarize_tag_threshold=1e-5, binarize_label_threshold=1., word_regex=word_regex, return_metric_per_label=ENTITIES[:5]),
+            "exact": dict(module="dem", binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=word_regex, add_label_specific_metrics=ENTITIES[:5]),
         } 
     else:
         raise Exception("dataset must be a dict or a str")
