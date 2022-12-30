@@ -121,9 +121,9 @@ class DocumentEntityMetric(Metric):
         self.add_label_specific_metrics = add_label_specific_metrics
         self.binarize_label_threshold = float(binarize_label_threshold) if binarize_label_threshold is not False else binarize_label_threshold
         self.binarize_tag_threshold = float(binarize_tag_threshold) if binarize_tag_threshold is not False else binarize_tag_threshold
-        self.add_state(f"true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state(f"pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state(f"gold_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("gold_count", default=torch.tensor(0.), dist_reduce_fx="sum")
         for label in self.add_label_specific_metrics:
            self.add_state(f"{label}_true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
            self.add_state(f"{label}_pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
@@ -141,7 +141,6 @@ class DocumentEntityMetric(Metric):
             preds: Predictions from model
             target: Ground truth values
         """
-
         for pred_doc, gold_doc in zip(preds, targets):
             for label,(tp, pc, gc) in self.compare_two_samples(pred_doc, gold_doc).items():
                 self.increment(f"true_positive", by=tp)
@@ -169,8 +168,7 @@ class DocumentEntityMetric(Metric):
             gold_doc_entities = [{"label": f.get("label", "main"), "fragments": [f]} for f in
                                  dedup((f for entity in gold_doc_entities for f in entity["fragments"]), key=lambda x: (x['begin'], x['end'], x.get('label', None)))]
 
-        words = regex_tokenize(gold_doc["text"], reg=self.word_regex, do_unidecode=True, return_offsets_mapping=
-True)
+        words = regex_tokenize(gold_doc["text"], reg=self.word_regex, do_unidecode=True, return_offsets_mapping=True)
 
         all_fragment_labels = set()
         all_entity_labels = set()
@@ -204,15 +202,12 @@ True)
         if len(all_entity_labels) == 0:
             all_entity_labels = ["main"]
 
-        fragments_begin, fragments_end = split_spans(fragments_begin, fragments_end, words["begin"], words["end"
-])
+        fragments_begin, fragments_end = split_spans(fragments_begin, fragments_end, words["begin"], words["end"])
         pred_entities_labels = [[False] * len(all_entity_labels)] * max(len(pred_doc_entities), 1)
-        pred_tags = [[[False] * len(words["begin"]) for _ in range(len(all_fragment_labels))] for _ in range(max
-(len(pred_doc_entities), 1))]  # n_entities * n_token_labels * n_tokens
+        pred_tags = [[[False] * len(words["begin"]) for _ in range(len(all_fragment_labels))] for _ in range(max(len(pred_doc_entities), 1))]  # n_entities * n_token_labels * n_tokens
         gold_entities_labels = [[False] * len(all_entity_labels)] * max(len(gold_doc_entities), 1)
         gold_entities_optional_labels = [[False] * len(all_entity_labels)] * max(len(gold_doc_entities), 1)
-        gold_tags = [[[False] * len(words["begin"]) for _ in range(len(all_fragment_labels))] for _ in range(max
-(len(gold_doc_entities), 1))]  # n_entities * n_token_labels * n_tokens
+        gold_tags = [[[False] * len(words["begin"]) for _ in range(len(all_fragment_labels))] for _ in range(max(len(gold_doc_entities), 1))]  # n_entities * n_token_labels * n_tokens
 
         for entity_idx, (entity_fragments, entity) in enumerate(zip(pred_entities_fragments, pred_doc_entities)):
             for fragment_idx, fragment in zip(entity_fragments, entity["fragments"]):
