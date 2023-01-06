@@ -11,6 +11,8 @@ from nlstruct.recipes.al_utils import EmissionMonitoringCallback,ManagingConfide
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
+from random import sample,seed
+
 class AL_Simulator():
     def __init__(
          self,
@@ -18,26 +20,52 @@ class AL_Simulator():
          dataset,
          selection_strategy,
          metrics,
+         annotiter_size = 2,
+         k = 2,
     ):
         self.model = model
         self.dataset = dataset
         self.selection_strategy = selection_strategy
+        if selection_strategy == "random":
+            seed(42)
         self.metrics = metrics
+        self.annotiter_size = annotiter_size
+        self.k = k
+        if len(dataset.val_data)>0:
+            print("Specifying the validation dataset size is useless, it's determined by k in AL_Simulator.")
+        self.pool = self.dataset.val_data + self.dataset.train_data
+        self.dataset.val_data = []
+        self.dataset.train_data = []
 
     def run_simulation(self, num_iterations, max_steps, xp_name, gpus):
+        for _ in range(self.k):
+            examples = self.select_examples()
+            print(examples)
+            self.annotate(examples, to_dev_split=True)
         for i in range(num_iterations):
             examples = self.select_examples()
+            print(examples)
             self.run_iteration(examples, max_steps=max_steps, xp_name=xp_name+str(i), gpus=gpus)
 
     def select_examples(self):
-        return None
+        if self.selection_strategy=="ordered":
+            return list(range(self.annotiter_size))
+        elif self.selection_strategy=="random":
+            return sample(range(len(self.pool)), k=self.annotiter_size)
    
     def run_iteration(self, selected_examples, max_steps, xp_name, gpus):
-        self.annotate(selected_examples, self.dataset)
+        self.annotate(selected_examples)
+        print("starting iteration with")
+        print([d['doc_id'] for d in self.dataset.val_data[:4]], 'as val data, and')
+        print([d['doc_id'] for d in self.dataset.train_data[:10]], ', ... as train data')
         self.go(max_steps=max_steps, xp_name=xp_name, gpus=gpus)
 
-    def annotate(self, examples, dataset):
-        pass
+    def annotate(self, examples, to_dev_split=False):
+        rec = self.dataset.val_data if to_dev_split else self.dataset.train_data
+        for e in sorted(examples,reverse=True):
+            #print(e, [d["doc_id"] for d in rec], [d["doc_id"] for d in self.pool[:10]])
+            rec.append(self.pool.pop(e))
+            #print(e, [d["doc_id"] for d in rec], [d["doc_id"] for d in self.pool[:10]])
 
     def go(
       self,
@@ -46,77 +74,37 @@ class AL_Simulator():
       gpus,
       ):
         print(self.dataset.describe())
-        mylogger = RichTableLogger(key="epoch", fields={
-            "epoch": {},
-            "step": {},
-        
-            "(.*)_?loss": {"goal": "lower_is_better", "format": "{:.4f}"},
-            "(.*)_precision": False,  # {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_p"},
-            "(.*)_recall": False,  # {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_r"},
-            "(.*)_tp": False,
-            "(.*)_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
-        
-            ".*_lr|max_grad": {"format": "{:.2e}"},
-            "duration": {"format": "{:.0f}", "name": "dur(s)"},
-        })
 
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
         
-        #this
-        this_xp_name = xp_name
-    
         try:
             trainer = pl.Trainer(
                 gpus=gpus,
                 progress_bar_refresh_rate=1,
                 checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
-                callbacks=[#ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not this_xp_name else 'checkpoints/' + this_xp_name + '-{hashkey}-{global_step:05d}'),
+                callbacks=[#ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}'),
                            EmissionMonitoringCallback(num_train_epochs=10),
                            EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                            ManagingConfidenceMeasuresCallback()],
                 logger=[
-                    mylogger,
-                    pl.loggers.TestTubeLogger("logs", name=this_xp_name if this_xp_name is not None else "untitled_experience"),
+                    RichTableLogger(key="epoch", fields={
+                        "epoch": {},"step": {},
+                        "(.*)_?loss": {"goal": "lower_is_better", "format": "{:.4f}"},
+                        "(.*)_(precision|recall|tp)": False,
+                        "(.*)_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
+                        ".*_lr|max_grad": {"format": "{:.2e}"},
+                        "duration": {"format": "{:.0f}", "name": "dur(s)"},
+                    }),
+                    pl.loggers.TestTubeLogger("logs", name=xp_name if xp_name is not None else "untitled_experience"),
                 ],
                 val_check_interval=40,
                 max_steps=max_steps
             )
             trainer.fit(self.model, datamodule=self.dataset)
-            mylogger.finalize(True)
+            trainer.logger[0].finalize(True)
 
-            result_output_filename = "checkpoints/{}.json".format(trainer.callbacks[0].hashkey)
-            if not os.path.exists(result_output_filename):
-                if gpus:
-                    self.model.cuda()
-                if self.dataset.test_data:
-                    print("TEST RESULTS:")
-                else:
-                    print("VALIDATION RESULTS (NO TEST SET):")
-                eval_data = self.dataset.test_data if self.dataset.test_data else self.dataset.val_data
-
-                final_metrics = MetricsCollection({
-                    **{metric_name: get_instance(metric_config) for metric_name, metric_config in self.metrics.items()},
-                })
-
-                results = final_metrics(list(self.model.predict(eval_data)), eval_data)
-                print(pd.DataFrame(results).T)
-
-                def json_default(o):
-                    if isinstance(o, slice):
-                        return str(o)
-                    raise
-
-                with open(result_output_filename, 'w') as json_file:
-                    json.dump({
-                        "config": {**get_config(self.model), "max_steps": max_steps},
-                        "results": results,
-                    }, json_file, default=json_default)
-            else:
-                with open(result_output_filename, 'r') as json_file:
-                    results = json.load(json_file)["results"]
-                    print(pd.DataFrame(results).T)
         except AlreadyRunningException as e:
             model = None
             print("Experiment was already running")

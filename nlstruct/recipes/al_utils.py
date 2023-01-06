@@ -13,21 +13,6 @@ from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
-def isnotebook():
-    try:
-        shell = get_ipython().__class__.__name__
-        if shell == 'ZMQInteractiveShell':
-            return True  # Jupyter notebook or qtconsole
-        elif shell == 'TerminalInteractiveShell':
-            return False  # Terminal running IPython
-        else:
-            return False  # Other type (?)
-    except NameError:
-        return False  # Probably standard Python interpreter
-
-
-if not isnotebook():
-    display = print
 
 shared_cache = {}
 
@@ -78,12 +63,12 @@ def classic_build_model_dataset_and_metrics(
       biaffine_loss_weight: float = 1.,
       hidden_size: int = 400,
       val_check_interval: int = None,
-      bert_name: str = "camembert/camembert-large",
+      bert_name: str = "camembert/camembert-base",
       fasttext_file: str = "",  # set to "" to disable
       unique_label: int = False,
       norm_bert: bool = False,
       dropout_p: float = 0.1,
-      batch_size: int = 32,
+      batch_size: int = 16,
       lr: float = 1e-3,
       use_lr_schedules: bool = True,
       word_pooler_mode: str = "mean",
@@ -236,57 +221,3 @@ def classic_build_model_dataset_and_metrics(
     os.makedirs("checkpoints", exist_ok=True)
     
     return model, dataset, metrics
-    #try:
-    #    trainer = pl.Trainer(
-    #        gpus=1,
-    #        progress_bar_refresh_rate=1,
-    #        #checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
-    #        callbacks=[#ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}', check_lock=check_lock),
-    #                   EmissionMonitoringCallback(num_train_epochs=10),
-    #                   EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
-    #                   ManagingConfidenceMeasuresCallback()],
-    #        logger=[
-    #            pl.loggers.TestTubeLogger("logs", "untitled_experience"),
-    #        ],
-    #        val_check_interval=10,
-    #        max_steps=400)
-    #    
-    #    trainer.fit(model, dataset)
-    #    logger.finalize(True)
-
-    #    result_output_filename = "checkpoints/{}.json".format(trainer.callbacks[0].hashkey)
-    #    if not os.path.exists(result_output_filename):
-    #        if gpus:
-    #            model.cuda()
-    #        if dataset.test_data:
-    #            print("TEST RESULTS:")
-    #        else:
-    #            print("VALIDATION RESULTS (NO TEST SET):")
-    #        eval_data = dataset.test_data if dataset.test_data else dataset.val_data
-
-    #        final_metrics = MetricsCollection({
-    #            **{metric_name: get_instance(metric_config) for metric_name, metric_config in metrics.items()},
-    #        })
-
-    #        results = final_metrics(list(model.predict(eval_data)), eval_data)
-    #        display(pd.DataFrame(results).T)
-
-    #        def json_default(o):
-    #            if isinstance(o, slice):
-    #                return str(o)
-    #            raise
-
-    #        with open(result_output_filename, 'w') as json_file:
-    #            json.dump({
-    #                "config": {**get_config(model), "max_steps": max_steps},
-    #                "results": results,
-    #            }, json_file, default=json_default)
-    #    else:
-    #        with open(result_output_filename, 'r') as json_file:
-    #            results = json.load(json_file)["results"]
-    #            display(pd.DataFrame(results).T)
-    #except AlreadyRunningException as e:
-    #    model = None
-    #    print("Experiment was already running")
-    #    print(e)
-
