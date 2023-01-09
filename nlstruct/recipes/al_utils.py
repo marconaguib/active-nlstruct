@@ -13,7 +13,6 @@ from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
-
 shared_cache = {}
 
 BASE_WORD_REGEX = r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|}~]'
@@ -38,17 +37,17 @@ class EmissionMonitoringCallback(pl.Callback):
         if self.ctr<self.num_train_epochs-1 and self.tracker is not None:
              self.tracker.stop()
 
-class ManagingConfidenceMeasuresCallback(pl.Callback):
-    def on_validation_epoch_end(self, trainer, pl_module):
-        with open('collector.csv','a+') as f:
-            f.write('\n')
-    def on_train_end(self,trainer,pl_module):
-        with open('collector.csv','a+') as f:
-            f.write('=====\n')
+#class ManagingConfidenceMeasuresCallback(pl.Callback):
+#    def on_validation_epoch_end(self, trainer, pl_module):
+#        with open('collector.csv','a+') as f:
+#            f.write('\n')
+#    def on_train_end(self,trainer,pl_module):
+#        with open('collector.csv','a+') as f:
+#            f.write('=====\n')
         
 def classic_build_model_dataset_and_metrics(
       dataset: Dict[str, str],
-      seed: int,
+      seed: int = 42,
       do_char: bool = True,
       do_biaffine: bool = True,
       do_tagging: str = "full",
