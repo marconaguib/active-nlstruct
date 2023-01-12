@@ -67,7 +67,6 @@ class AL_Simulator():
         if sentencize_pool:
             for d in all_docs:
                 self.pool.extend(sentencize(d, entity_overlap="split"))
-        #print(self.pool[0])
         self.dataset.val_data = []
         self.dataset.train_data = []
         self.nb_iter = 0
@@ -77,37 +76,48 @@ class AL_Simulator():
 
     def run_simulation(self, num_iterations, max_steps, xp_name):
         for _ in range(self.k):
-            examples = self.select_examples(strategy="random")
+            examples = self.select_examples()
             self.annotate(examples, to_dev_split=True)
         for _ in range(num_iterations):
-            examples = self.select_examples(strategy=self.selection_strategy)
+            examples = self.select_examples()
             self.nb_iter += 1
             self.run_iteration(examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
         remaining_examples = list(range(len(self.pool)))
         self.nb_iter += len(self.pool)//self.annotiter_size
         self.run_iteration(remaining_examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
 
-    def select_examples(self, strategy,min_iter_conf=5):
+    def select_examples(self):
+        if self.nb_iter:
+            strategy = self.selection_strategy
+        else:
+            strategy = "random"
+
         if strategy=="ordered":
             return list(range(self.annotiter_size))
-        elif strategy=="random" or strategy=="confidence" and self.nb_iter<min_iter_conf:
+        elif strategy=="random":
             print('selecting random predictions')
             return sample(range(len(self.pool)), k=self.annotiter_size)
-        elif strategy=="confidence":
+        elif strategy=="length":
+            scorer = lambda i:len(self.pool[i]['text'])
+            return sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
+        elif strategy=="variety":
+            print('selecting most heterogeneous predictions')
             if self.gpus:
                 self.model.cuda()
-            print('selecting most unconifdent predictions')
-            return [x[0] for x in 
-                     sorted(enumerate(self.model.predict(self.pool)),
-                        key= lambda l : 
-                             sum([p['confidence'] for p in l[1]['entities']])/len(l[1]['entities'])
-                             if len(l[1]['entities']) else 0,
-                        reverse=True
-                        )[:self.annotiter_size]
-                   ]
+            preds = list(self.model.predict(self.pool))
+            scorer = lambda i:len(set([p['label'] for p in preds[i]['entities']]))
+            return sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
+        elif strategy=="confidence":
+            print('selecting most unconfident predictions')
+            if self.gpus:
+                self.model.cuda()
+            mean = lambda l:sum(l)/len(l) if len(l) else 0
+            preds = list(self.model.predict(self.pool))
+            scorer = lambda i:mean([p['confidence'] for p in preds[i]['entities']])
+            return sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
    
     def run_iteration(self, selected_examples, max_steps, xp_name):
-        self.model = self._classic_model_builder(finetune_bert=True,)# *args, **kwargs)
+        self.model = self._classic_model_builder(finetune_bert=True,)#*self.args,**self.kwargs)
         self.annotate(selected_examples)
         print("starting iteration with")
         print([d['doc_id'] for d in self.dataset.val_data], 'as val data, and')
