@@ -10,13 +10,32 @@ from rich_logger import RichTableLogger
 import pandas as pd
 from nlstruct import BRATDataset, MetricsCollection, get_instance, get_config, InformationExtractor
 from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
-from nlstruct.recipes.al_utils import EmissionMonitoringCallback
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from nlstruct.data_utils import sentencize
-from random import sample,seed
+from random import sample,seed,random
+from numpy import log as ln
+from statistics import median as real_median
 
 shared_cache = {}
+
+class EmissionMonitoringCallback(pl.Callback):
+    def __init__(self, num_train_epochs):    
+        self.ctr = 0
+        self.num_train_epochs = num_train_epochs
+        self.tracker = None
+    def on_train_epoch_start(self, trainer, pl_module):
+        if self.ctr==1:
+            self.tracker = CarbonTracker(epochs=self.num_train_epochs, epochs_before_pred=2, monitor_epochs=9)
+        if self.ctr>0:
+            self.tracker.epoch_start()
+    def on_train_epoch_end(self, trainer, pl_module):
+        if self.ctr>0:
+            self.tracker.epoch_end()
+        self.ctr+=1
+    def on_train_end(self, trainer, pl_module):
+        if self.ctr<self.num_train_epochs-1 and self.tracker is not None:
+             self.tracker.stop()
 
 class AL_Simulator():
     def __init__(
@@ -39,6 +58,7 @@ class AL_Simulator():
         self.k = k
         self.unique_label = unique_label
         self.dataset_name = dataset_name
+        self.preds = None
         seed(al_seed)
         
         if not isinstance(dataset_name, dict):
@@ -66,11 +86,24 @@ class AL_Simulator():
         self.pool = []
         if sentencize_pool:
             for d in all_docs:
-                self.pool.extend(sentencize(d, entity_overlap="split"))
+                self.pool.extend(sentencize(d, reg_split=r"(?<=[.|\s])(?:\s+)(?=[A-Z])", entity_overlap="split"))
         self.dataset.val_data = []
         self.dataset.train_data = []
         self.nb_iter = 0
         self.gpus = gpus
+
+        mean = lambda l:sum(l)/len(l) if len(l) else 0
+        median = lambda l:real_median(l) if len(l)>2 else 1e8
+        unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
+        self.scorers = {
+        "ordered": lambda i:-i,
+        "random": lambda i:random(),
+        "length": lambda i:len(self.pool[i]['text']),
+        "preds_variety": lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
+        "preds_confidence":lambda i:-mean([unsig(p['confidence']) for p in self.preds[i]['entities']]),
+        "preds_median_confidence":lambda i:-median([p['confidence'] for p in self.preds[i]['entities']]),
+        "preds_uncertainty":lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
+        }
         
         #self.model = self._classic_model_builder(finetune_bert=True, *args, **kwargs)
 
@@ -79,49 +112,44 @@ class AL_Simulator():
             examples = self.select_examples()
             self.annotate(examples, to_dev_split=True)
         for _ in range(num_iterations):
-            examples = self.select_examples()
             self.nb_iter += 1
+            examples = self.select_examples(write_to_file=f'checkpoints/docselection_{xp_name}_{self.nb_iter}.txt')
             self.run_iteration(examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
         remaining_examples = list(range(len(self.pool)))
         self.nb_iter += len(self.pool)//self.annotiter_size
         self.run_iteration(remaining_examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
 
-    def select_examples(self):
-        if self.nb_iter:
-            strategy = self.selection_strategy
-        else:
-            strategy = "random"
 
-        if strategy=="ordered":
-            return list(range(self.annotiter_size))
-        elif strategy=="random":
-            print('selecting random predictions')
-            return sample(range(len(self.pool)), k=self.annotiter_size)
-        elif strategy=="length":
-            scorer = lambda i:len(self.pool[i]['text'])
-            return sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
-        elif strategy=="variety":
-            print('selecting most heterogeneous predictions')
+    def select_examples(self,write_to_file=None):
+        strategy = self.selection_strategy if self.nb_iter>1 else 'random'  
+        print(f"Scoring following the {strategy} strategy.")
+        scorer = self.scorers[strategy]
+        
+        if "preds_" in strategy:
+            print('Computing the new model predictions')
             if self.gpus:
                 self.model.cuda()
-            preds = list(self.model.predict(self.pool))
-            scorer = lambda i:len(set([p['label'] for p in preds[i]['entities']]))
-            return sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
-        elif strategy=="confidence":
-            print('selecting most unconfident predictions')
-            if self.gpus:
-                self.model.cuda()
-            mean = lambda l:sum(l)/len(l) if len(l) else 0
-            preds = list(self.model.predict(self.pool))
-            scorer = lambda i:mean([p['confidence'] for p in preds[i]['entities']])
-            return sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
+            self.preds = list(self.model.predict(self.pool))
+        
+        res = sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
+        if write_to_file is not None:
+            print(f'selected examples are written in {write_to_file}')
+            with open(write_to_file,"w") as f:
+                f.write(f"====== selected docs at annotiter {self.nb_iter} ============\n")
+                for i in res:
+                    f.write(f'-------{self.pool[i]["doc_id"]}------\n')
+                    f.write(self.pool[i]['text']+'\n')
+        return res
    
     def run_iteration(self, selected_examples, max_steps, xp_name):
         self.model = self._classic_model_builder(finetune_bert=True,)#*self.args,**self.kwargs)
         self.annotate(selected_examples)
-        print("starting iteration with")
-        print([d['doc_id'] for d in self.dataset.val_data], 'as val data, and')
-        print([d['doc_id'] for d in self.dataset.train_data[:10]], ', ... as train data')
+        #print("starting iteration with val data")
+        #for d in self.dataset.val_data:
+        #    print(d['doc_id'])
+        #print("and train data")
+        #for d in self.dataset.train_data:
+        #    print(d['doc_id'])
         self.go(max_steps=max_steps, xp_name=xp_name)
 
     def annotate(self, examples, to_dev_split=False):
@@ -140,7 +168,7 @@ class AL_Simulator():
                 progress_bar_refresh_rate=1,
                 checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
                 callbacks=[ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}'),
-                           #EmissionMonitoringCallback(num_train_epochs=10),
+                           EmissionMonitoringCallback(num_train_epochs=10),
                            EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                            ],
                 logger=[
