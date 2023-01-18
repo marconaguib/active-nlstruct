@@ -92,17 +92,25 @@ class AL_Simulator():
         self.nb_iter = 0
         self.gpus = gpus
 
-        mean = lambda l:sum(l)/len(l) if len(l) else 0
+        #mean = lambda l:sum(l)/len(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>2 else 1e8
-        unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
+        #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
         self.scorers = {
-        "ordered": lambda i:-i,
-        "random": lambda i:random(),
-        "length": lambda i:len(self.pool[i]['text']),
-        "preds_variety": lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
-        "preds_confidence":lambda i:-mean([unsig(p['confidence']) for p in self.preds[i]['entities']]),
-        "preds_median_confidence":lambda i:-median([p['confidence'] for p in self.preds[i]['entities']]),
-        "preds_uncertainty":lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
+        "ordered": {'func':lambda i:-i, "predict_before":False},
+        "random": {'func':lambda i:random(), "predict_before":False},
+        "length": {'func':lambda i:len(self.pool[i]['text']), "predict_before":False},
+        "variety": {
+                 'func':lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
+                 "predict_before":True
+                 },
+        "uncertainty_median":{
+                 'func':lambda i:median([1-p['confidence'] for p in self.preds[i]['entities']]),
+                 "predict_before":True
+                 },
+        "uncertainty_sum":{
+                 'func':lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
+                 "predict_before":True
+                 },
         }
         
         #self.model = self._classic_model_builder(finetune_bert=True, *args, **kwargs)
@@ -113,7 +121,7 @@ class AL_Simulator():
             self.annotate(examples, to_dev_split=True)
         for _ in range(num_iterations):
             self.nb_iter += 1
-            examples = self.select_examples(write_to_file=f'checkpoints/docselection_{xp_name}_{self.nb_iter}.txt')
+            examples = self.select_examples(write_to_file=f'docselection/{xp_name}_{self.nb_iter}.txt')
             self.run_iteration(examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
         remaining_examples = list(range(len(self.pool)))
         self.nb_iter += len(self.pool)//self.annotiter_size
@@ -125,15 +133,17 @@ class AL_Simulator():
         print(f"Scoring following the {strategy} strategy.")
         scorer = self.scorers[strategy]
         
-        if "preds_" in strategy:
+        if scorer['predict_before']:
             print('Computing the new model predictions')
             if self.gpus:
                 self.model.cuda()
             self.preds = list(self.model.predict(self.pool))
         
-        res = sorted(range(len(self.pool)), key=scorer, reverse=1)[:self.annotiter_size]
+        res = sorted(range(len(self.pool)), key=scorer['func'], reverse=1)[:self.annotiter_size]
         if write_to_file is not None:
             print(f'selected examples are written in {write_to_file}')
+            if not os.path.exists(os.path.dirname(write_to_file)):
+                os.makedirs(os.path.dirname(write_to_file))
             with open(write_to_file,"w") as f:
                 f.write(f"====== selected docs at annotiter {self.nb_iter} ============\n")
                 for i in res:
