@@ -30,6 +30,7 @@ class AL_Simulator():
          gpus = 1,
          sentencize_pool = True,
          unique_label = False,
+         and_train_on_all_data = False,
          BASE_WORD_REGEX = r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|}~]',
          BASE_SENTENCE_REGEX = r"((?:\s*\n)+\s*|(?:(?<=[\w0-9]{2,}\.|[)]\.)\s+))(?=[[:upper:]]|•|\n)",
          entities_to_remove_from_pool = None,
@@ -41,6 +42,7 @@ class AL_Simulator():
         self.k = k
         self.unique_label = unique_label
         self.dataset_name = dataset_name
+        self.and_train_on_all_data = and_train_on_all_data
         self.preds = None
         seed(al_seed)
         
