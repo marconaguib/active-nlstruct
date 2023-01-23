@@ -19,24 +19,6 @@ from statistics import median as real_median
 
 shared_cache = {}
 
-class EmissionMonitoringCallback(pl.Callback):
-    def __init__(self, num_train_epochs):    
-        self.ctr = 0
-        self.num_train_epochs = num_train_epochs
-        self.tracker = None
-    def on_train_epoch_start(self, trainer, pl_module):
-        if self.ctr==1:
-            self.tracker = CarbonTracker(epochs=self.num_train_epochs, epochs_before_pred=2, monitor_epochs=9)
-        if self.ctr>0:
-            self.tracker.epoch_start()
-    def on_train_epoch_end(self, trainer, pl_module):
-        if self.ctr>0:
-            self.tracker.epoch_end()
-        self.ctr+=1
-    def on_train_end(self, trainer, pl_module):
-        if self.ctr<self.num_train_epochs-1 and self.tracker is not None:
-             self.tracker.stop()
-
 class AL_Simulator():
     def __init__(
          self,
@@ -50,6 +32,7 @@ class AL_Simulator():
          unique_label = False,
          BASE_WORD_REGEX = r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|}~]',
          BASE_SENTENCE_REGEX = r"((?:\s*\n)+\s*|(?:(?<=[\w0-9]{2,}\.|[)]\.)\s+))(?=[[:upper:]]|•|\n)",
+         entities_to_remove_from_pool = None,
          *args,
          **kwargs,
     ):
@@ -86,11 +69,19 @@ class AL_Simulator():
         self.pool = []
         if sentencize_pool:
             for d in all_docs:
-                self.pool.extend(sentencize(d, reg_split=r"(?<=[.|\s])(?:\s+)(?=[A-Z])", entity_overlap="split"))
+                sentences = sentencize(d, reg_split=r"(?<=[.|\s])(?:\s+)(?=[A-Z])", entity_overlap="split")
+                self.pool.extend([s for s in sentences if len(s['text'])>1])
+        
+        if entities_to_remove_from_pool is not None:
+            self.pool = [s for s in self.pool 
+                     if not [e['label'] for e in s['entities']] in [[t] for t in entities_to_remove_from_pool]
+                   ]
         self.dataset.val_data = []
         self.dataset.train_data = []
+        self.doc_order = range(len(self.pool))
         self.nb_iter = 0
         self.gpus = gpus
+        self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=11)
 
         #mean = lambda l:sum(l)/len(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>2 else 1e8
@@ -98,74 +89,85 @@ class AL_Simulator():
         self.scorers = {
         "ordered": {'func':lambda i:-i, "predict_before":False},
         "random": {'func':lambda i:random(), "predict_before":False},
-        "length": {'func':lambda i:len(self.pool[i]['text']), "predict_before":False},
-        "variety": {
+        "length": {
+                 'func':lambda i:len(self.pool[i]['text']),
+                 "predict_before":False,
+                 },
+        "pred_variety": {
                  'func':lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
-                 "predict_before":True
+                 "predict_before":True,
                  },
         "uncertainty_median":{
                  'func':lambda i:median([1-p['confidence'] for p in self.preds[i]['entities']]),
-                 "predict_before":True
+                 "predict_before":True,
                  },
         "uncertainty_sum":{
                  'func':lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
-                 "predict_before":True
+                 "predict_before":True,
+                 },
+        "pred_num":{
+                 'func':lambda i:len(self.preds[i]['entities']),
+                 "predict_before":True,
                  },
         }
-        
-        #self.model = self._classic_model_builder(finetune_bert=True, *args, **kwargs)
 
     def run_simulation(self, num_iterations, max_steps, xp_name):
         for _ in range(self.k):
-            examples = self.select_examples()
-            self.annotate(examples, to_dev_split=True)
+            self.select_examples()
+            self.annotate(num_examples=self.annotiter_size, to_dev_split=True)
         for _ in range(num_iterations):
+            self.tracker.epoch_start()
             self.nb_iter += 1
-            examples = self.select_examples(write_to_file=f'docselection/{xp_name}_{self.nb_iter}.txt')
-            self.run_iteration(examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
-        remaining_examples = list(range(len(self.pool)))
+            self.select_examples()
+            self.write_docselection(filename=f'docselection/{xp_name}_{self.nb_iter}.txt')
+            self.run_iteration(num_examples=self.annotiter_size, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
+            self.tracker.epoch_end()
+        self.tracker.epoch_start()
         self.nb_iter += len(self.pool)//self.annotiter_size
-        self.run_iteration(remaining_examples, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
+        self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
+        self.tracker.epoch_end()
 
+    def select_examples(self):
+        print(f"Scoring following the {self.selection_strategy} strategy.")
+        scorer = self.scorers[self.selection_strategy]
+        first_n = 3
+        every_n = 2
+        make_new_ordering = (self.nb_iter-2)<first_n or (self.nb_iter-2)%every_n==0
+        if self.doc_order is not None and not make_new_ordering:
+            print('Adopted the last selection order for this iteration.')
+            return
+        if scorer['predict_before'] :  
+            if self.nb_iter <= 1 :
+                print('But it\'s too early to count on the model to perform this strategy. Selecting randomly.')
+                scorer = self.scorers['random']
+            else :
+                print('Computing the new model predictions')
+                if self.gpus:
+                    self.model.cuda()
+                self.preds = list(self.model.predict(self.pool))
+        if not len(self.doc_order):
+            print('Pool exhausted.')
+        self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
 
-    def select_examples(self,write_to_file=None):
-        strategy = self.selection_strategy if self.nb_iter>1 else 'random'  
-        print(f"Scoring following the {strategy} strategy.")
-        scorer = self.scorers[strategy]
-        
-        if scorer['predict_before']:
-            print('Computing the new model predictions')
-            if self.gpus:
-                self.model.cuda()
-            self.preds = list(self.model.predict(self.pool))
-        
-        res = sorted(range(len(self.pool)), key=scorer['func'], reverse=1)[:self.annotiter_size]
-        if write_to_file is not None:
-            print(f'selected examples are written in {write_to_file}')
-            if not os.path.exists(os.path.dirname(write_to_file)):
-                os.makedirs(os.path.dirname(write_to_file))
-            with open(write_to_file,"w") as f:
-                f.write(f"====== selected docs at annotiter {self.nb_iter} ============\n")
-                for i in res:
-                    f.write(f'-------{self.pool[i]["doc_id"]}------\n')
-                    f.write(self.pool[i]['text']+'\n')
-        return res
+    def write_docselection(self, filename):
+        print(f'selected examples are written in {filename}')
+        if not os.path.exists(os.path.dirname(filename)):
+            os.makedirs(os.path.dirname(filename))
+        with open(filename,"w") as f:
+            f.write(f"====== selected docs at annotiter {self.nb_iter} ============\n")
+            for i in self.doc_order[:self.annotiter_size]:
+                f.write(f'-------{self.pool[i]["doc_id"]}------\n')
+                f.write(self.pool[i]['text']+'\n')
    
-    def run_iteration(self, selected_examples, max_steps, xp_name):
+    def run_iteration(self, num_examples, max_steps, xp_name):
         self.model = self._classic_model_builder(finetune_bert=True,)#*self.args,**self.kwargs)
-        self.annotate(selected_examples)
-        #print("starting iteration with val data")
-        #for d in self.dataset.val_data:
-        #    print(d['doc_id'])
-        #print("and train data")
-        #for d in self.dataset.train_data:
-        #    print(d['doc_id'])
+        self.annotate(num_examples=num_examples)
         self.go(max_steps=max_steps, xp_name=xp_name)
 
-    def annotate(self, examples, to_dev_split=False):
+    def annotate(self, num_examples, to_dev_split=False):
         rec = self.dataset.val_data if to_dev_split else self.dataset.train_data
-        for e in sorted(examples,reverse=True):
-            rec.append(self.pool.pop(e))
+        rec.extend([self.pool[e] for e in self.doc_order[:num_examples]])
+        self.doc_order = self.doc_order[num_examples:]
 
     def go(self, max_steps, xp_name):
         gc.collect()
@@ -178,7 +180,7 @@ class AL_Simulator():
                 progress_bar_refresh_rate=1,
                 checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
                 callbacks=[ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}'),
-                           EmissionMonitoringCallback(num_train_epochs=10),
+                           #EmissionMonitoringCallback(num_train_epochs=10),
                            EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                            ],
                 logger=[
