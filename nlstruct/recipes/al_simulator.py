@@ -122,32 +122,33 @@ class AL_Simulator():
             self.write_docselection(filename=f'docselection/{xp_name}_{self.nb_iter}.txt')
             self.run_iteration(num_examples=self.annotiter_size, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
             self.tracker.epoch_end()
-        self.tracker.epoch_start()
-        self.nb_iter += len(self.pool)//self.annotiter_size
-        self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
-        self.tracker.epoch_end()
+        if self.and_train_on_all_data:
+            self.tracker.epoch_start()
+            self.nb_iter += len(self.doc_order)//self.annotiter_size
+            self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
+            self.tracker.epoch_end()
 
     def select_examples(self):
         print(f"Scoring following the {self.selection_strategy} strategy.")
         scorer = self.scorers[self.selection_strategy]
         first_n = 3
-        every_n = 2
-        make_new_ordering = (self.nb_iter-2)<first_n or (self.nb_iter-2)%every_n==0
-        if self.doc_order is not None and not make_new_ordering:
+        every_n = 3
+        make_new_ordering = (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
+        #during dev-selection calls, self.nb_iter==0
+        if self.doc_order is None or make_new_ordering:
+            if scorer['predict_before'] :  
+                if self.nb_iter <= 1 :
+                    print('But too early to count on the model to perform this strategy. Selecting randomly.')
+                    scorer = self.scorers['random']
+                else :
+                    print('Computing the new model predictions')
+                    if self.gpus:
+                        self.model.cuda()
+                    self.preds = list(self.model.predict(self.pool))
+            self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
+        else:
             print('Adopted the last selection order for this iteration.')
             return
-        if scorer['predict_before'] :  
-            if self.nb_iter <= 1 :
-                print('But it\'s too early to count on the model to perform this strategy. Selecting randomly.')
-                scorer = self.scorers['random']
-            else :
-                print('Computing the new model predictions')
-                if self.gpus:
-                    self.model.cuda()
-                self.preds = list(self.model.predict(self.pool))
-        if not len(self.doc_order):
-            print('Pool exhausted.')
-        self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
 
     def write_docselection(self, filename):
         print(f'selected examples are written in {filename}')
