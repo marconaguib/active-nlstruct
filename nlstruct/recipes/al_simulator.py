@@ -45,17 +45,21 @@ class AL_Simulator():
         self.and_train_on_all_data = and_train_on_all_data
         self.preds = None
         seed(al_seed)
+        self.args = args
+        self.kwargs = kwargs
         
         if not isinstance(dataset_name, dict):
             raise Exception("dataset must be a dict or a str")
-
-
         self.dataset = BRATDataset(
             **dataset_name,
         )
         self.word_regex = BASE_WORD_REGEX
         self.sentence_split_regex = BASE_SENTENCE_REGEX
-        self.metrics = {"exact": dict(module="dem",binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=self.word_regex),} 
+        self.metrics = {"exact": dict(module="dem",binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=self.word_regex, 
+            add_label_specific_metrics=self.dataset.labels(),
+        )
+        } 
+        self.model = self._classic_model_builder(*args,**kwargs)
 
         if unique_label:
             for split in (dataset.train_data, dataset.val_data, dataset.test_data):
@@ -83,7 +87,7 @@ class AL_Simulator():
         self.doc_order = range(len(self.pool))
         self.nb_iter = 0
         self.gpus = gpus
-        self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=11)
+        self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
 
         #mean = lambda l:sum(l)/len(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>2 else 1e8
@@ -163,7 +167,7 @@ class AL_Simulator():
                 f.write(self.pool[i]['text']+'\n')
    
     def run_iteration(self, num_examples, max_steps, xp_name):
-        self.model = self._classic_model_builder(finetune_bert=True,)#*self.args,**self.kwargs)
+        #self.model = self._classic_model_builder(finetune_bert=True,)#*args,**kwargs)
         self.annotate(num_examples=num_examples)
         self.go(max_steps=max_steps, xp_name=xp_name)
 
@@ -178,12 +182,15 @@ class AL_Simulator():
         gc.collect()
         
         try:
+            os.makedirs(os.path.join("checkpoints",os.path.dirname(xp_name)), exist_ok=True)
             trainer = pl.Trainer(
                 gpus=self.gpus,
+                #fast_dev_run=1,
                 progress_bar_refresh_rate=1,
                 checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
-                callbacks=[ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}'),
-                           #EmissionMonitoringCallback(num_train_epochs=10),
+                callbacks=[
+                           #ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}'),
+                           ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{global_step:05d}'),
                            EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                            ],
                 logger=[
