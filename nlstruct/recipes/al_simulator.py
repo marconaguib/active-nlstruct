@@ -64,7 +64,7 @@ class AL_Simulator():
         self.model = self._classic_model_builder(*args,**kwargs)
 
         if unique_label:
-            for split in (dataset.train_data, dataset.val_data, dataset.test_data):
+            for split in (self.dataset.train_data, self.dataset.val_data, self.dataset.test_data):
                 if split:
                     for doc in split:
                         for e in doc["entities"]:
