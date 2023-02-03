@@ -55,8 +55,10 @@ class AL_Simulator():
         )
         self.word_regex = BASE_WORD_REGEX
         self.sentence_split_regex = BASE_SENTENCE_REGEX
+        labels= [l for l in self.dataset.labels() if l not in entities_to_remove_from_pool]
+ 
         self.metrics = {"exact": dict(module="dem",binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=self.word_regex, 
-            add_label_specific_metrics=self.dataset.labels(),
+            add_label_specific_metrics=labels,filter_entities=labels,
         )
         } 
         self.model = self._classic_model_builder(*args,**kwargs)
@@ -198,7 +200,8 @@ class AL_Simulator():
                         "epoch": {},"step": {},
                         "(.*)_?loss": {"goal": "lower_is_better", "format": "{:.4f}"},
                         "(.*)_(precision|recall|tp)": False,
-                        "(.*)_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
+                        "val_exact_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
+                        "(.*)(?<!val_exact)_f1": False,
                         ".*_lr|max_grad": {"format": "{:.2e}"},
                         "duration": {"format": "{:.0f}", "name": "dur(s)"},
                     }),
@@ -395,7 +398,6 @@ class AL_Simulator():
         ).train()
 
         model.encoder.encoders[0].cache = shared_cache
-        os.makedirs("checkpoints", exist_ok=True)
         
         return model
   
