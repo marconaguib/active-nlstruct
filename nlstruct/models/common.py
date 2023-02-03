@@ -267,7 +267,10 @@ class BERTEncoder(TextEncoder):
         self.combine_mode = combine_mode
 
         bert_model = self.bert.bert if hasattr(self.bert, 'bert') else self.bert.roberta if hasattr(self.bert, 'roberta') else self.bert
-        bert_output_size = bert_model.embeddings.word_embeddings.weight.shape[1] * (1 if combine_mode != "concat" else n_layers)
+        word_embeds = bert_model.embeddings
+        if hasattr(word_embeds,'word_embeddings'):
+            word_embeds = word_embeds.word_embeddings
+        bert_output_size = word_embeds.weight.shape[1] * (1 if combine_mode != "concat" else n_layers)
         self.bert_output_size = bert_output_size
         if proj_size is not None:
             self.proj = torch.nn.Linear(bert_output_size, proj_size)
@@ -276,12 +279,22 @@ class BERTEncoder(TextEncoder):
             self.proj = None
             self._output_size = bert_output_size
         self.norm = torch.nn.LayerNorm(self._output_size) if do_norm else Identity()
-
+        
         if freeze_n_layers < 0:
             freeze_n_layers = len(bert_model.encoder.layer) + 2 + freeze_n_layers
-        for module in (bert_model.embeddings, *bert_model.encoder.layer)[:freeze_n_layers]:
-            for param in module.parameters():
-                param.requires_grad = False
+        if hasattr(bert_model,'encoder'):
+            #the model is probably bert- or roberta-based
+            for module in (bert_model.embeddings, *bert_model.encoder.layer)[:freeze_n_layers]:
+                for param in module.parameters():
+                    param.requires_grad = False
+        else:
+            #the model is probably XLM-based
+            module_lists = [l for l in bert_model.modules() if isinstance(l,torch.nn.ModuleList)]
+            for module_list in module_lists:
+                for module in (bert_model.embeddings, *module_list)[:freeze_n_layers]:
+                    for param in module.parameters():
+                        param.requires_grad = False
+
         if bert_dropout_p is not None:
             for module in bert_model.modules():
                 if isinstance(module, torch.nn.Dropout):
@@ -322,7 +335,7 @@ class BERTEncoder(TextEncoder):
             token_features = res.hidden_states
         else:
             lm_embeds = ()
-            token_features = res[2]
+            token_features = res['hidden_states']
         if self.n_layers == 1:
             token_features = token_features[-1].unsqueeze(-2)
         else:
