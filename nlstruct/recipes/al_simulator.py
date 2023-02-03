@@ -113,6 +113,10 @@ class AL_Simulator():
                  'func':lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
                  "predict_before":True,
                  },
+        "uncertainty_max":{
+                    'func':lambda i:max([1-p['confidence'] for p in self.preds[i]['entities']]),
+                    "predict_before":True,
+                },
         "pred_num":{
                  'func':lambda i:len(self.preds[i]['entities']),
                  "predict_before":True,
@@ -200,7 +204,7 @@ class AL_Simulator():
                         "epoch": {},"step": {},
                         "(.*)_?loss": {"goal": "lower_is_better", "format": "{:.4f}"},
                         "(.*)_(precision|recall|tp)": False,
-                        "val_exact_f1": {"goal": "higher_is_better", "format": "{:.4f}", "name": r"\1_f1"},
+                        "val_exact_f1": {"goal": "higher_is_better", "format": "{:.4f}"},
                         "(.*)(?<!val_exact)_f1": False,
                         ".*_lr|max_grad": {"format": "{:.2e}"},
                         "duration": {"format": "{:.0f}", "name": "dur(s)"},
