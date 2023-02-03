@@ -140,14 +140,15 @@ class AL_Simulator():
             self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
             self.tracker.epoch_end()
 
+    def should_reselect_examples(self):
+        first_n = 3
+        every_n = 3
+        return self.doc_order is None or (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
+        
     def select_examples(self):
         print(f"Scoring following the {self.selection_strategy} strategy.")
         scorer = self.scorers[self.selection_strategy]
-        first_n = 3
-        every_n = 3
-        make_new_ordering = (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
-        #during dev-selection calls, self.nb_iter==0
-        if self.doc_order is None or make_new_ordering:
+        if self.should_reselect_examples():
             if scorer['predict_before'] :  
                 if self.nb_iter <= 1 :
                     print('But too early to count on the model to perform this strategy. Selecting randomly.')
