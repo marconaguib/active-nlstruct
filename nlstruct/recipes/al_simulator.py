@@ -92,6 +92,7 @@ class AL_Simulator():
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
 
         #mean = lambda l:sum(l)/len(l) if len(l) else 0
+        max = lambda l:max(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>2 else 1e8
         #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
         self.scorers = {
