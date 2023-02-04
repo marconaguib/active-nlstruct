@@ -25,5 +25,5 @@ for corpus in args.corpus_name_or_names:
                     finetune_bert=True,
                     bert_name=args.bert_name,
                     )
-            sim.run_simulation(num_iterations=10, max_steps=800, xp_name=f"{corpus}_noevents/{strategy}seed{randseed}")
+            sim.run_simulation(num_iterations=10, max_steps=800, xp_name=f"{corpus}/{strategy}seed{randseed}")
 
