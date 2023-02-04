@@ -64,7 +64,7 @@ class AL_Simulator():
         self.model = self._classic_model_builder(*args,**kwargs)
 
         if unique_label:
-            for split in (dataset.train_data, dataset.val_data, dataset.test_data):
+            for split in (self.dataset.train_data, self.dataset.val_data, self.dataset.test_data):
                 if split:
                     for doc in split:
                         for e in doc["entities"]:
@@ -92,6 +92,7 @@ class AL_Simulator():
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
 
         #mean = lambda l:sum(l)/len(l) if len(l) else 0
+        max = lambda l:max(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>2 else 1e8
         #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
         self.scorers = {
@@ -140,14 +141,15 @@ class AL_Simulator():
             self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
             self.tracker.epoch_end()
 
+    def should_reselect_examples(self):
+        first_n = 3
+        every_n = 3
+        return self.doc_order is None or (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
+        
     def select_examples(self):
         print(f"Scoring following the {self.selection_strategy} strategy.")
         scorer = self.scorers[self.selection_strategy]
-        first_n = 3
-        every_n = 3
-        make_new_ordering = (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
-        #during dev-selection calls, self.nb_iter==0
-        if self.doc_order is None or make_new_ordering:
+        if self.should_reselect_examples():
             if scorer['predict_before'] :  
                 if self.nb_iter <= 1 :
                     print('But too early to count on the model to perform this strategy. Selecting randomly.')
