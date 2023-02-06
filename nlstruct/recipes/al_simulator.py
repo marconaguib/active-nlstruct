@@ -16,6 +16,8 @@ from nlstruct.data_utils import sentencize
 from random import sample,seed,random
 from numpy import log as ln
 from statistics import median as real_median
+from sklearn.cluster import KMeans
+from sklearn.feature_extraction.text import TfidfVectorizer
 
 shared_cache = {}
 
@@ -46,6 +48,7 @@ class AL_Simulator():
         self.and_train_on_all_data = and_train_on_all_data
         self.preds = None
         seed(al_seed)
+        self.al_seed = al_seed
         self.args = args
         self.kwargs = kwargs
         
@@ -101,46 +104,85 @@ class AL_Simulator():
         median = lambda l:real_median(l) if len(l)>2 else 1e8
         #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
         self.scorers = {
-        "ordered": {'func':lambda i:-i, "predict_before":False},
-        "random": {'func':lambda i:random(), "predict_before":False},
+        "ordered": {
+                'func':lambda i:-i, 
+                "predict_before":False,
+                'individual':True,
+                'frequency':'once',
+                },
+        "random": {
+                'func':lambda i:random(),
+                "predict_before":False,
+                'individual':True,
+                'frequency':'once',
+            },
         "length": {
                  'func':lambda i:len(self.pool[i]['text']),
                  "predict_before":False,
+                 "individual":True,
+                 'frequency':'once',
+
                  },
         "pred_variety": {
                  'func':lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
                  "predict_before":True,
+                 "individual":True,
+                 "frequency":"sometimes",
                  },
         "uncertainty_median":{
                  'func':lambda i:median([1-p['confidence'] for p in self.preds[i]['entities']]),
                  "predict_before":True,
+                 "individual":True,
+                 "frequency":"sometimes",
                  },
         "uncertainty_sum":{
                  'func':lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
                  "predict_before":True,
+                "individual":True,
+                "frequency":"sometimes",
                  },
         "uncertainty_min":{
-                    'func':lambda i:minimum([1-p['confidence'] for p in self.preds[i]['entities']]),
-                    "predict_before":True,
+                'func':lambda i:minimum([1-p['confidence'] for p in self.preds[i]['entities']]),
+                "predict_before":True,
+                "individual":True,
+                "frequency":"sometimes",
                 },
         "uncertainty_max":{
-                    'func':lambda i:maximum([1-p['confidence'] for p in self.preds[i]['entities']]),
-                    "predict_before":True,
+                'func':lambda i:maximum([1-p['confidence'] for p in self.preds[i]['entities']]),
+                "predict_before":True,
+                "individual":True,
+                "frequency":"sometimes",   
                 },
         "pred_num":{
                  'func':lambda i:len(self.preds[i]['entities']),
                  "predict_before":True,
+                 "individual":True,
+                "frequency":"sometimes",
                  },
+        "cluster": {
+                "predict_before":False,
+                "individual":False,
+                "frequency":"once",
+                },  
         }
 
     def run_simulation(self, num_iterations, max_steps, xp_name):
+        """Run the simulation for a given number of iterations."""
+        assert self.selection_strategy in self.scorers.keys(), f"Unknown selection strategy {self.selection_strategy}"
+        scorer = self.scorers[self.selection_strategy]
         for _ in range(self.k):
-            self.select_examples()
+            if self.should_reselect_examples(frequency=scorer['frequency']):
+                self.select_examples(scorer)
+            else:
+                print('Adopted the last selection order for this iteration.')
             self.annotate(num_examples=self.annotiter_size, to_dev_split=True)
         for _ in range(num_iterations):
             self.tracker.epoch_start()
             self.nb_iter += 1
-            self.select_examples()
+            if self.should_reselect_examples(frequency=scorer['frequency']):
+                self.select_examples(scorer)
+            else:
+                print('Adopted the last selection order for this iteration.')
             self.write_docselection(filename=f'docselection/{xp_name}_{self.nb_iter}.txt')
             self.run_iteration(num_examples=self.annotiter_size, max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
             self.tracker.epoch_end()
@@ -150,15 +192,47 @@ class AL_Simulator():
             self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
             self.tracker.epoch_end()
 
-    def should_reselect_examples(self):
-        first_n = 3
-        every_n = 3
+    def should_reselect_examples(self, frequency):
+        """Decide whether to reselect examples or not"""
+        assert frequency in ["always", "sometimes", "once"]
+        if frequency=="always":
+            first_n = 1
+            every_n = 1
+        elif frequency=="sometimes":
+            first_n = 3
+            every_n = 3
+        elif frequency=="once":
+            first_n = 1
+            every_n = 1e8
         return self.doc_order is None or (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
-        
-    def select_examples(self):
-        print(f"Scoring following the {self.selection_strategy} strategy.")
-        scorer = self.scorers[self.selection_strategy]
-        if self.should_reselect_examples():
+    
+    def rearrange_elements(self, indices, labels):
+        """Rearrange elements in a list to shuffle them by label"""
+        indices = list(indices)
+        labels = list(labels)
+        assert len(indices) == len(labels)
+        indices_by_label = {label: [] for label in set(labels)}
+        for i, label in zip(indices, labels):
+            indices_by_label[label].append(i)
+        # for label in indices_by_label:
+        #     random.shuffle(indices_by_label[label])
+        # for label in indices_by_label:
+        #     print(label, indices_by_label[label][:10])
+        while len(indices):
+            for label in indices_by_label:
+                if len(indices_by_label[label]):
+                    yield indices_by_label[label].pop(0)
+                    indices.pop(0)
+                else:
+                    del indices_by_label[label]
+                    break
+        return indices
+
+    def select_examples(self, scorer):
+        """Select examples to annotate based on a given strategy"""
+        if scorer['individual']:
+            print(f"Scoring following the {self.selection_strategy} strategy.")
+            scorer = self.scorers[self.selection_strategy]
             if scorer['predict_before'] :  
                 if self.nb_iter <= 1 :
                     print('But too early to count on the model to perform this strategy. Selecting randomly.')
@@ -170,10 +244,35 @@ class AL_Simulator():
                     self.preds = list(self.model.predict(self.pool))
             self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
         else:
-            print('Adopted the last selection order for this iteration.')
-            return
+            print(f'Clustering docs based on vocab')
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
+            kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+            #num_clusters = len(set(kmeans.labels_))
+            # print("====================================")
+            # for i in range(num_clusters):
+            #     print(f'cluster {i} contains {sum(kmeans.labels_==i)} docs')
+            #     print('-----------------')
+            #     print('here is a sample of the docs in this cluster')
+            #     nb_printed = 0
+            #     for j in range(len(kmeans.labels_)):
+            #         if kmeans.labels_[j]==i:
+            #             nb_printed += 1
+            #             print(self.pool[self.doc_order[j]]['text'])
+            #             if nb_printed >= 3:
+            #                 break
+            # then we sort the docs such that no two docs from the same cluster are next to each other
+            #print(self.doc_order[:10])[]
+            
+            # print("before")
+            # print(self.doc_order[:30])
+            # print(kmeans.labels_[:30])
+            self.doc_order = list(self.rearrange_elements(self.doc_order, kmeans.labels_))
+            # print("after")
+            # print(self.doc_order[:10])
 
     def write_docselection(self, filename):
+        """Write the selected examples in a file"""
         print(f'selected examples are written in {filename}')
         if not os.path.exists(os.path.dirname(filename)):
             os.makedirs(os.path.dirname(filename))
@@ -184,16 +283,18 @@ class AL_Simulator():
                 f.write(self.pool[i]['text']+'\n')
    
     def run_iteration(self, num_examples, max_steps, xp_name):
-        #self.model = self._classic_model_builder(finetune_bert=True,)#*args,**kwargs)
+        """Run an iteration of active learning"""
         self.annotate(num_examples=num_examples)
         self.go(max_steps=max_steps, xp_name=xp_name)
 
     def annotate(self, num_examples, to_dev_split=False):
+        """Annotate a given number of examples"""
         rec = self.dataset.val_data if to_dev_split else self.dataset.train_data
         rec.extend([self.pool[e] for e in self.doc_order[:num_examples]])
         self.doc_order = self.doc_order[num_examples:]
 
     def go(self, max_steps, xp_name):
+        """Train the model"""
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
@@ -278,10 +379,8 @@ class AL_Simulator():
           bert_proj_size: int = None,
           biaffine_loss_weight: float = 1.,
           hidden_size: int = 400,
-          val_check_interval: int = None,
           bert_name: str = "camembert/camembert-base",
           fasttext_file: str = "",  # set to "" to disable
-          unique_label: int = False,
           norm_bert: bool = False,
           dropout_p: float = 0.1,
           batch_size: int = 16,

@@ -7,7 +7,6 @@ import os
 import glob
 import pandas as pd
 import json
-import sys
 import argparse
 
 
@@ -48,6 +47,7 @@ dataset = pd.read_csv(common_log_fn,sep=';')
 dataset['batch_str'] = dataset['batch'].apply(str)
 dataset.sort_values(['batch','xp_name'],inplace=True)
 print(dataset)
+
 
 
 def plot_iterations(data,**kwargs):
