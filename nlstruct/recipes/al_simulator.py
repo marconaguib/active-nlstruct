@@ -33,7 +33,8 @@ class AL_Simulator():
          and_train_on_all_data = False,
          BASE_WORD_REGEX = r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|}~]',
          BASE_SENTENCE_REGEX = r"((?:\s*\n)+\s*|(?:(?<=[\w0-9]{2,}\.|[)]\.)\s+))(?=[[:upper:]]|•|\n)",
-         entities_to_remove_from_pool = None,
+         entities_to_ignore = [],
+         entities_to_remove_from_pool = [],
          *args,
          **kwargs,
     ):
@@ -55,7 +56,7 @@ class AL_Simulator():
         )
         self.word_regex = BASE_WORD_REGEX
         self.sentence_split_regex = BASE_SENTENCE_REGEX
-        labels= [l for l in self.dataset.labels() if l not in entities_to_remove_from_pool]
+        labels= [l for l in self.dataset.labels() if l not in entities_to_ignore+entities_to_remove_from_pool]
  
         self.metrics = {"exact": dict(module="dem",binarize_tag_threshold=1., binarize_label_threshold=1., word_regex=self.word_regex, 
             add_label_specific_metrics=labels,filter_entities=labels,
@@ -80,7 +81,10 @@ class AL_Simulator():
                 sentences = sentencize(d, reg_split=r"(?<=[.|\s])(?:\s+)(?=[A-Z])", entity_overlap="split")
                 self.pool.extend([s for s in sentences if len(s['text'])>1])
         
-        if entities_to_remove_from_pool is not None:
+        if len(entities_to_ignore):
+            for s in self.pool:
+                s['entities'] = [e for e in s['entities'] if e['label'] not in entities_to_ignore]
+        if len(entities_to_remove_from_pool):
             self.pool = [s for s in self.pool 
                      if not [e['label'] for e in s['entities']] in [[t] for t in entities_to_remove_from_pool]
                    ]
@@ -92,7 +96,8 @@ class AL_Simulator():
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
 
         #mean = lambda l:sum(l)/len(l) if len(l) else 0
-        max = lambda l:max(l) if len(l) else 0
+        maximum = lambda l:max(l) if len(l) else 0
+        minimum = lambda l:min(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>2 else 1e8
         #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
         self.scorers = {
@@ -114,8 +119,12 @@ class AL_Simulator():
                  'func':lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
                  "predict_before":True,
                  },
+        "uncertainty_min":{
+                    'func':lambda i:minimum([1-p['confidence'] for p in self.preds[i]['entities']]),
+                    "predict_before":True,
+                },
         "uncertainty_max":{
-                    'func':lambda i:max([1-p['confidence'] for p in self.preds[i]['entities']]),
+                    'func':lambda i:maximum([1-p['confidence'] for p in self.preds[i]['entities']]),
                     "predict_before":True,
                 },
         "pred_num":{
