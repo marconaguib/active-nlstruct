@@ -222,18 +222,17 @@ class AL_Simulator():
             every_n = 1e8
         return self.doc_order is None or (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
     
-    def rearrange_elements(self, indices, labels):
-        """Rearrange elements in a list to shuffle them by label"""
-        indices = list(indices)
-        labels = list(labels)
+    def cluster_vocab_and_rearrange(self):
+        """Cluster the vocabulary and rearrange the doc_order accordingly"""
+        vectorizer = TfidfVectorizer()
+        X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
+        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+        indices = list(self.doc_order)
+        labels = list(kmeans.labels_)
         assert len(indices) == len(labels)
         indices_by_label = {label: [] for label in set(labels)}
         for i, label in zip(indices, labels):
             indices_by_label[label].append(i)
-        # for label in indices_by_label:
-        #     random.shuffle(indices_by_label[label])
-        # for label in indices_by_label:
-        #     print(label, indices_by_label[label][:10])
         while len(indices):
             for label in indices_by_label:
                 if len(indices_by_label[label]):
@@ -242,7 +241,7 @@ class AL_Simulator():
                 else:
                     del indices_by_label[label]
                     break
-        return indices
+        self.doc_order = list(self.rearrange_elements())
 
     def select_examples(self, scorer):
         """Select examples to annotate based on a given strategy"""
@@ -260,32 +259,9 @@ class AL_Simulator():
                     self.preds = list(self.model.predict(self.pool))
             self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
         else:
+            assert self.selection_strategy == 'cluster', f"clustering is the only non-individual strategy available"
             print(f'Clustering docs based on vocab')
-            vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
-            kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-            #num_clusters = len(set(kmeans.labels_))
-            # print("====================================")
-            # for i in range(num_clusters):
-            #     print(f'cluster {i} contains {sum(kmeans.labels_==i)} docs')
-            #     print('-----------------')
-            #     print('here is a sample of the docs in this cluster')
-            #     nb_printed = 0
-            #     for j in range(len(kmeans.labels_)):
-            #         if kmeans.labels_[j]==i:
-            #             nb_printed += 1
-            #             print(self.pool[self.doc_order[j]]['text'])
-            #             if nb_printed >= 3:
-            #                 break
-            # then we sort the docs such that no two docs from the same cluster are next to each other
-            #print(self.doc_order[:10])[]
-            
-            # print("before")
-            # print(self.doc_order[:30])
-            # print(kmeans.labels_[:30])
-            self.doc_order = list(self.rearrange_elements(self.doc_order, kmeans.labels_))
-            # print("after")
-            # print(self.doc_order[:10])
+            self.cluster_and_rearrange()
 
     def write_docselection(self, filename):
         """Write the selected examples in a file"""
