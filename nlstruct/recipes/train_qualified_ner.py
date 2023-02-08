@@ -2,6 +2,7 @@ import gc
 import json
 import os
 import string
+from copy import deepcopy
 from typing import Dict
 
 import fire
@@ -13,6 +14,7 @@ from rich_logger import RichTableLogger
 
 from nlstruct import BRATDataset, MetricsCollection, get_instance, get_config, InformationExtractor
 from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
+from nlstruct.data_utils import mappable
 
 
 def isnotebook():
@@ -37,7 +39,22 @@ BASE_WORD_REGEX = r'(?:[\w]+(?:[’\'])?)|[!"#$%&\'’\(\)*+,-./:;<=>?@\[\]^_`{|
 BASE_SENTENCE_REGEX = r"((?:\s*\n)+\s*|(?:(?<=[\w0-9]{2,}\.|[)]\.)\s+))(?=[[:upper:]]|•|\n)"
 
 
-def train_ner(
+
+@mappable
+def prepare_data(doc):
+    doc = deepcopy(doc)
+    for e in doc['entities']:
+        attribute_labels = []
+        for f in e['fragments']:
+            f['label'] = e['label']
+        attribute_labels.append(e['label'])
+        for a in e['attributes']:
+            attribute_labels.append("{}:{}".format(a['label'], a['value']))
+        e['label'] = attribute_labels
+    return doc
+
+
+def train_qualified_ner(
       dataset: Dict[str, str],
       seed: int,
       do_char: bool = True,
@@ -163,6 +180,7 @@ def train_ner(
     if isinstance(dataset, dict):
         dataset = BRATDataset(
             **dataset,
+            preprocess_fn=prepare_data,
         )
         word_regex = BASE_WORD_REGEX
         sentence_split_regex = BASE_SENTENCE_REGEX
@@ -182,13 +200,27 @@ def train_ner(
                 for doc in split:
                     for e in doc["entities"]:
                         e["label"] = "main"
+                        
+    
+    for split in (dataset.train_data, dataset.val_data, dataset.test_data):
+        if split:
+            for doc in split:
+                for e in doc["entities"]:
+                    e["label"] = "main"
+                    
+    entity_labels = sorted(set([label for doc in (*dataset.train_data, *dataset.val_data) for e in doc['entities'] for label in (e['label'] if isinstance(e['label'], (tuple, list)) else (e['label'],))]))
+    fragments_labels = sorted(set([f['label'] for doc in (*dataset.train_data, *dataset.val_data) for e in doc['entities'] for f in e['fragments']]))
+    ner_label_to_qualifiers = {
+        label: [label, *(other for other in entity_labels if ':' in other)]
+        for label in fragments_labels
+    }
 
     display(dataset.describe())
 
     model = InformationExtractor(
         seed=seed,
         preprocessor=dict(
-            module="ner_preprocessor",
+            module="qualified_ner_preprocessor",
             bert_name=bert_name,  # transformer name
             bert_lower=bert_lower,
             split_into_multiple_samples=True,
@@ -206,14 +238,15 @@ def train_ner(
             empty_entities="raise",  # when an entity cannot be mapped to any word, raise
             vocabularies={
                 **{  # vocabularies to use, call .train() before initializing to fill/complete them automatically from training data
-                    "entity_label": dict(module="vocabulary", values=sorted(dataset.labels()), with_unk=False, with_pad=False),
+                    "entity_label": dict(module="vocabulary", values=sorted(entity_labels), with_unk=False, with_pad=False),
+                    "fragment_label": dict(module="vocabulary", values=sorted(fragments_labels), with_unk=False, with_pad=False),
                 },
                 **({
                        "char": dict(module="vocabulary", values=string.ascii_letters + string.digits + string.punctuation, with_unk=True, with_pad=False),
                    } if do_char else {})
             },
-            fragment_label_is_entity_label=True,
-            multi_label=False,
+            fragment_label_is_entity_label=False,
+            multi_label=True,
             filter_entities=None,  # "entity_type_score_density", "entity_type_score_lesion"),
         ),
         dynamic_preprocessing=False,
@@ -250,7 +283,7 @@ def train_ner(
             ],
         ),
         decoder=dict(
-            module="contiguous_entity_decoder",
+            module="contiguous_qualified_entity_decoder",
             contextualizer=dict(
                 module="lstm",
                 num_layers=n_lstm_layers,
@@ -276,6 +309,11 @@ def train_ner(
                 biaffine_loss_weight=biaffine_loss_weight,
                 eps=1e-14,
             ),
+            do_qualification=True,
+            qualifier=dict(
+                n_qualifiers=len(entity_labels),
+            ),
+            ner_label_to_qualifiers=ner_label_to_qualifiers,
             intermediate_loss_slice=slice(-1, None),
         ),
 
@@ -303,7 +341,6 @@ def train_ner(
     os.makedirs("checkpoints", exist_ok=True)
     
     if fit:
-        
         logger = RichTableLogger(key="epoch", fields={
             "epoch": {},
             "step": {},
@@ -317,70 +354,72 @@ def train_ner(
             ".*_lr|max_grad": {"format": "{:.2e}"},
             "duration": {"format": "{:.0f}", "name": "dur(s)"},
         })
-        with logger.printer:
-            try:
-                trainer = pl.Trainer(
-                    gpus=gpus,
-                    progress_bar_refresh_rate=False,
-                    checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
-                    callbacks=[ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}', check_lock=check_lock)],
-                    logger=[
-                        #        pl.loggers.TestTubeLogger("path/to/logs", name="my_experiment"),
-                        logger,
-                    ],
-                    val_check_interval=max_steps // 10,
-                    max_steps=max_steps)
-                trainer.fit(model, dataset)
-                trainer.logger[0].finalize(True)
 
-                result_output_filename = "checkpoints/{}.json".format(trainer.callbacks[0].hashkey)
-                if not os.path.exists(result_output_filename):
-                    if gpus:
-                        model.cuda()
-                    if dataset.test_data:
-                        print("TEST RESULTS:")
-                    else:
-                        print("VALIDATION RESULTS (NO TEST SET):")
-                    eval_data = dataset.test_data if dataset.test_data else dataset.val_data
+        try:
+            trainer = pl.Trainer(
+                gpus=gpus,
+                progress_bar_refresh_rate=1.0,
+                checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
+                callbacks=[ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}', check_lock=check_lock)],
+                logger=[
+                    #        pl.loggers.TestTubeLogger("path/to/logs", name="my_experiment"),
+                    logger,
+                ],
+                val_check_interval=max_steps // 10,
+                max_steps=max_steps)
+            trainer.fit(model, dataset)
+            logger.finalize(True)
 
-                    final_metrics = MetricsCollection({
-                        **{metric_name: get_instance(metric_config) for metric_name, metric_config in metrics.items()},
-                        **{
-                            metric_name: get_instance(metric_config)
-                            for label in model.preprocessor.vocabularies['entity_label'].values
-                            for metric_name, metric_config in
-                            {
-                                f"{label}_exact": dict(module="dem", binarize_tag_threshold=1., binarize_label_threshold=1., filter_entities=[label], word_regex=word_regex),
-                                f"{label}_partial": dict(module="dem", binarize_tag_threshold=1e-5, binarize_label_threshold=1., filter_entities=[label], word_regex=word_regex),
-                            }.items()
-                        }
-                    })
-
-                    results = final_metrics(list(model.predict(eval_data)), eval_data)
-                    display(pd.DataFrame(results).T)
-
-                    def json_default(o):
-                        if isinstance(o, slice):
-                            return str(o)
-                        raise
-
-                    with open(result_output_filename, 'w') as json_file:
-                        json.dump({
-                            "config": {**get_config(model), "max_steps": max_steps},
-                            "results": results,
-                        }, json_file, default=json_default)
+            result_output_filename = "checkpoints/{}.json".format(trainer.callbacks[0].hashkey)
+            if not os.path.exists(result_output_filename):
+                if gpus:
+                    model.cuda()
+                if dataset.test_data:
+                    print("TEST RESULTS:")
                 else:
-                    with open(result_output_filename, 'r') as json_file:
-                        results = json.load(json_file)["results"]
-                        display(pd.DataFrame(results).T)
-            except AlreadyRunningException as e:
-                model = None
-                print("Experiment was already running")
-                print(e)
+                    print("VALIDATION RESULTS (NO TEST SET):")
+                eval_data = dataset.test_data if dataset.test_data else dataset.val_data
+
+                final_metrics = MetricsCollection({
+                    **{metric_name: get_instance(metric_config) for metric_name, metric_config in metrics.items()},
+                    **{
+                        metric_name: get_instance(metric_config)
+                        for label in model.preprocessor.vocabularies['entity_label'].values
+                        for metric_name, metric_config in
+                        {
+                            f"{label}_exact": dict(module="dem", binarize_tag_threshold=1., binarize_label_threshold=1., filter_entities=[label], word_regex=word_regex),
+                            f"{label}_partial": dict(module="dem", binarize_tag_threshold=1e-5, binarize_label_threshold=1., filter_entities=[label], word_regex=word_regex),
+                        }.items()
+                    }
+                })
+
+                results = final_metrics(list(model.predict(eval_data)), eval_data)
+                display(pd.DataFrame(results).T)
+
+                def json_default(o):
+                    if isinstance(o, slice):
+                        return str(o)
+                    raise
+
+                with open(result_output_filename, 'w') as json_file:
+                    json.dump({
+                        "config": {**get_config(model), "max_steps": max_steps},
+                        "results": results,
+                    }, json_file, default=json_default)
+            else:
+                with open(result_output_filename, 'r') as json_file:
+                    results = json.load(json_file)["results"]
+                    display(pd.DataFrame(results).T)
+        except AlreadyRunningException as e:
+            model = None
+            print("Experiment was already running")
+            print(e)
+        finally:
+            logger.finalize(True)
 
     if return_model:
         return model
 
 
 if __name__ == "__main__":
-    fire.Fire(train_ner)
+    fire.Fire(train_qualified_ner)

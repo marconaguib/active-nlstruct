@@ -2,6 +2,7 @@ import bisect
 import random
 import warnings
 from math import ceil
+from typing import Dict, Sequence, Optional
 
 import numpy as np
 import torch
@@ -9,8 +10,10 @@ import transformers
 
 from nlstruct.data_utils import mappable, huggingface_tokenize, regex_tokenize, slice_document, split_spans, regex_sentencize
 from nlstruct.models.common import Vocabulary, Contextualizer
+from nlstruct.models.qualification import Qualification, SpanEmbedding
 from nlstruct.registry import register, get_instance
 from nlstruct.torch_utils import list_factorize, batch_to_tensors
+from .ner import SpanScorer
 
 
 def slice_tokenization_output(tokens, begin, end, insert_before=None, insert_after=None):
@@ -29,6 +32,7 @@ def slice_tokenization_output(tokens, begin, end, insert_before=None, insert_aft
         "text": ([insert_before] if insert_before is not None else []) + list(tokens["text"][begin_indice:end_indice]) + ([insert_after] if insert_after is not None else []),
     }
 
+
 def compute_token_slice_indices(tokens, begin, end):
     index_after_first_token_begin = bisect.bisect_left(tokens["begin"], begin)
     index_before_first_token_end = bisect.bisect_right(tokens["end"], begin)
@@ -39,17 +43,21 @@ def compute_token_slice_indices(tokens, begin, end):
 
     return begin_indice, end_indice
 
+
 class LargeSentenceException(Exception):
     pass
+
 
 def is_overlapping(b1, e1, b2, e2):
     return e1 >= b2 and e2 >= b1
 
+
 def is_crossing(b0, e0, b1, e1):
     return (b1 < e0 < e1 and b0 < b1 < e0) or (b0 < e1 < e0 and b1 < b0 < e1)
 
-@register("ner_preprocessor")
-class NERPreprocessor(torch.nn.Module):
+
+@register("qualified_ner_preprocessor")
+class QualifiedNERPreprocessor(torch.nn.Module):
     def __init__(
           self,
           bert_name,
@@ -96,8 +104,8 @@ class NERPreprocessor(torch.nn.Module):
             Characters to "balance" when splitting sentence, ex: parenthesis, brackets, etc.
             Will make sure that we always have (number of '[')  <= (number of ']')
         :param sentence_entity_overlap: str
-            What to do when a entity overlaps multiple sentences ?
-            Choices: "raise" to raise an error or "split" to split the entity
+            What to do when an entity overlaps multiple sentences ?
+            Choices: "raise" to raise an error, "split" to split the entity or "join" to join the sentences
         :param max_tokens: int
             Maximum number of bert tokens in a sample
         :param large_sentences: str
@@ -160,7 +168,7 @@ class NERPreprocessor(torch.nn.Module):
             if len(tokenized_sample["words_text"]) == 0:
                 print("skipped empty", doc["doc_id"])
                 continue
-            
+
             # Here, we know that the sentence is not too long
             if "char" in self.vocabularies:
                 char_voc = self.vocabularies["char"]
@@ -203,11 +211,13 @@ class NERPreprocessor(torch.nn.Module):
                         entity_label = [entity_label]
                     elif not self.multi_label and isinstance(entity_label, (tuple, list)):
                         raise Exception("Entity {} has multiple labels but multi_label parameter is False".format(entity["entity_id"]))
+
                     if self.convert_attributes_to_labels:
-                        if isinstance(entity_label, (tuple, list)):
+                        if not isinstance(entity_label, (tuple, list)):
                             entity_label = [entity_label]
                         for attribute in entity["attributes"]:
                             entity_label.append("{}:{}".format(attribute["label"], attribute["value"]))
+
                     if isinstance(entity_label, (tuple, list)):
                         entities_label.append([label in entity_label for label in self.vocabularies["entity_label"].values])
                     else:
@@ -256,6 +266,10 @@ class NERPreprocessor(torch.nn.Module):
                 fragments_label = [self.vocabularies["fragment_label"].get(label) for label in fragments_label]
                 fragments_begin, fragments_end = fragments_begin.tolist(), fragments_end.tolist()
 
+                sorter = sorted(range(len(entities_fragments)), key=lambda i: min(entities_fragments[i]))
+                entities_label = [entities_label[i] for i in sorter]
+                entities_fragments = [entities_fragments[i] for i in sorter]
+
             if len(entities_label) == 0:
                 entities_label = [[False] * len(self.vocabularies["entity_label"].values)] if self.multi_label else [0]
                 entities_fragments = [[]]
@@ -295,7 +309,7 @@ class NERPreprocessor(torch.nn.Module):
                 "fragments_entities": fragments_entities,
                 "fragments_mask": fragments_mask,
                 "entities_mask": entities_mask,
-                "doc_id": sample["doc_id"],                
+                "doc_id": sample["doc_id"],
                 "words_text": tokenized_sample["words_text"],
                 "original_sample": sample,
                 "original_doc": doc,
@@ -427,34 +441,39 @@ class NERPreprocessor(torch.nn.Module):
                 words_bert_end += bert_offset
             bert_offset += len(bert_tokens["text"])
             if self.split_into_multiple_samples:
-                results.append((
-                    slice_document(
-                        doc,
-                        begin,
-                        end,
-                        entity_overlap=self.sentence_entity_overlap,
-                        only_text=only_text,
-                        main_fragment_label="main",
-                        offset_spans=True,
-                    ),
-                    {
-                        "words_bert_begin": words_bert_begin,
-                        "words_bert_end": words_bert_end,
-                        "words_text": words["text"],
-                        "words_begin": words["begin"] - begin,
-                        "words_end": words["end"] - begin,
-                    },
-                    {
-                        "bert_tokens_text": [bert_tokens["text"]],
-                        "bert_tokens_begin": [bert_tokens["begin"]],
-                        "bert_tokens_end": [bert_tokens["end"]],
-                        "bert_tokens_indice": [tokens_indice],
-                        **({
-                               "slice_begin": [0],
-                               "slice_end": [len(tokens_indice)],
-                           } if self.doc_context else {})
-                    }
-                ))
+                try:
+                    results.append((
+                        slice_document(
+                            doc,
+                            begin,
+                            end,
+                            entity_overlap="raise" if self.sentence_entity_overlap == "join" else self.sentence_entity_overlap,
+                            only_text=only_text,
+                            main_fragment_label="main",
+                            offset_spans=True,
+                        ),
+                        {
+                            "words_bert_begin": words_bert_begin,
+                            "words_bert_end": words_bert_end,
+                            "words_text": words["text"],
+                            "words_begin": words["begin"] - begin,
+                            "words_end": words["end"] - begin,
+                        },
+                        {
+                            "bert_tokens_text": [bert_tokens["text"]],
+                            "bert_tokens_begin": [bert_tokens["begin"]],
+                            "bert_tokens_end": [bert_tokens["end"]],
+                            "bert_tokens_indice": [tokens_indice],
+                            **({
+                                   "slice_begin": [0],
+                                   "slice_end": [len(tokens_indice)],
+                               } if self.doc_context else {})
+                        }
+                    ))
+                except OverlappingEntityException:
+                    if self.sentence_entity_overlap == "raise":
+                        raise
+
             else:
                 results[0][1]["words_text"] += words["text"]
                 # numpy arrays
@@ -542,7 +561,6 @@ class NERPreprocessor(torch.nn.Module):
             }, device=device)
         tensors["tokens_mask"] = tensors["tokens"] != -1
         tensors["tokens"].clamp_min_(0)
-        tensors["original_sample"] = [x["original_sample"] for x in batch]
         return tensors
 
     def decode(self, predictions, prep, group_by_document=True):
@@ -571,17 +589,17 @@ class NERPreprocessor(torch.nn.Module):
                 })
             for entity in doc_predictions:
                 if isinstance(entity["label"], (tuple, list)):
-                    label = [self.vocabularies['entity_label'].values[l] for l in entity["label"]]
+                    entity_label = [self.vocabularies['entity_label'].values[i] for i, keep in enumerate(entity["label"]) if keep]
                 else:
-                    label = [self.vocabularies['entity_label'].values[entity["label"]]]
+                    entity_label = [self.vocabularies['entity_label'].values[entity["label"]]]
                 if not self.multi_label:
-                    label = label[0]
+                    entity_label = entity_label[0]
                 res_entity = {
                     "entity_id": len(docs[-1]["entities"]),
-                    "label": label,
+                    "label": entity_label,
                     "attributes": [
                         {"label": label.split(":")[0], "value": (label.split(":")[1] or None)}
-                        for label in label if ":" in label
+                        for label in entity_label if ":" in label
                     ] if self.convert_attributes_to_labels else [],
                     "fragments": [{
                         "begin": char_offset + doc_prep["words_begin"][f["begin"]],
@@ -595,24 +613,20 @@ class NERPreprocessor(torch.nn.Module):
         return docs
 
 
-@register("span_scorer")
-class SpanScorer(torch.nn.Module):
-    def forward(self, features, mask, batch, force_gold=False):
-        raise NotImplementedError()
-
-    def loss(self, spans, batch):
-        raise NotImplementedError()
-
-
-@register("contiguous_entity_decoder")
-class ContiguousEntityDecoder(torch.nn.Module):
+@register("contiguous_qualified_entity_decoder")
+class ContiguousQualifiedEntityDecoder(torch.nn.Module):
     ENSEMBLE = "ensemble_contiguous_entity_decoder"
 
     def __init__(self,
                  contextualizer=None,
                  span_scorer=dict(),
+                 qualifier=dict(),
+                 span_embedding=dict(),
                  intermediate_loss_slice=slice(None),
-                 filter_predictions=False,
+                 filter_predictions: bool = False,
+                 do_qualification: bool = False,
+                 ner_label_to_qualifiers: Optional[Dict[str, Sequence[str]]] = None,
+                 qualifiers_combinations: Optional[Sequence[Sequence[str]]] = None,
                  _classifier=None,
                  _preprocessor=None,
                  _encoder=None,
@@ -620,21 +634,54 @@ class ContiguousEntityDecoder(torch.nn.Module):
         super().__init__()
 
         input_size = _encoder.output_size
-        labels = _preprocessor.vocabularies["entity_label"].values
+        fragment_labels = _preprocessor.vocabularies["fragment_label"].values
+        qualifier_labels = _preprocessor.vocabularies["entity_label"].values
         # Pre decoder module
         if contextualizer is not None:
             self.contextualizer = Contextualizer(**{**contextualizer, "input_size": input_size})
         else:
             self.contextualizer = None
 
-        self.n_labels = n_labels = len(labels)
+        self.n_labels = n_labels = len(fragment_labels)
+        size = input_size if contextualizer is None else self.contextualizer.output_size
         self.span_scorer = SpanScorer(**{
-            "input_size": input_size if contextualizer is None else self.contextualizer.output_size,
+            "input_size": size,
             "n_labels": n_labels,
             **span_scorer,
         })
+        self.do_qualification = do_qualification
+        if self.do_qualification:
+            self.span_embedding = SpanEmbedding(**{"input_size": size, "n_labels": len(fragment_labels), **span_embedding})
+            if ner_label_to_qualifiers is not None:
+                ner_label_to_qualifiers_tensor = torch.as_tensor([
+                    [
+                        label in ner_label_to_qualifiers.get(ner_label, ())
+                        for label in qualifier_labels
+                    ]
+                    for ner_label in fragment_labels])
+            else:
+                ner_label_to_qualifiers_tensor = None
+
+            if qualifiers_combinations is not None:
+                qualifiers_combinations_tensor = torch.as_tensor([
+                    [label in combination for label in qualifier_labels]
+                    for combination in qualifiers_combinations
+                ])
+            else:
+                qualifiers_combinations_tensor = None
+
+            self.qualification = Qualification(
+                input_size=self.span_embedding.output_size,
+                qualifiers_combinations=qualifiers_combinations_tensor,
+                ner_label_to_qualifiers=ner_label_to_qualifiers_tensor,
+                **qualifier,
+            )
+        else:
+            self.span_embedding = None
+            self.qualification = None
         self.intermediate_loss_slice = intermediate_loss_slice
-        assert filter_predictions is False or filter_predictions in  ("no_overlapping_same_label", "no_crossing_same_label", "no_overlapping", "no_crossing"), "Filter mode must be 'no_overlapping_same_label' or 'no_crossing_same_label' or 'no_overlapping' or 'no_crossing'"
+        assert filter_predictions is False or filter_predictions in ("no_overlapping_same_label", "no_crossing_same_label", "no_overlapping",
+                                                                     "no_crossing"), "Filter mode must be 'no_overlapping_same_label' or 'no_crossing_same_label' or 'no_overlapping' or 'no_crossing'"
         self.filter_predictions = filter_predictions
 
     def on_training_step(self, step_idx, total):
@@ -644,6 +691,11 @@ class ContiguousEntityDecoder(torch.nn.Module):
         return [*self.span_scorer.fast_params(), *(self.contextualizer.fast_params() if self.contextualizer is not None else [])]
 
     def forward(self, words_embed, batch=None, return_loss=False, return_predictions=False, filter_predictions=None, **kwargs):
+        if return_loss is True:
+            return_loss = {"ner", "qualifier"}
+        elif return_loss is False:
+            return_loss = set()
+
         ############################
         # Generate span candidates #
         ############################
@@ -657,14 +709,43 @@ class ContiguousEntityDecoder(torch.nn.Module):
             contextualized_words_embed = words_embed.unsqueeze(0)
 
         spans = self.span_scorer(contextualized_words_embed[self.intermediate_loss_slice if return_loss else slice(-1, None)],
-                                 words_mask, batch, force_gold=return_loss, **kwargs)
+                                 words_mask, batch, force_gold="ner" in return_loss, **kwargs)
+        spans_mask, spans_begin, spans_end, spans_ner_label = (
+            spans["flat_spans_mask"],
+            spans["flat_spans_begin"],
+            spans["flat_spans_end"],
+            spans["flat_spans_label"])
+
+        if "ner" not in return_loss:
+            batch["entities_mask"] = spans["flat_spans_mask"]
+            batch["entities_fragments"] = torch.arange(batch["entities_mask"].shape[1])[None, :, None].repeat(batch["entities_mask"].shape[0], 1, 1)
+
+        ############################################
+        # Qualify span candidates with more labels #
+        ############################################
+        qualification_result = self.qualification(
+            contextualized_words_embed[-1],
+            spans_begin,
+            spans_end,
+            spans_ner_label,
+            spans_mask,
+            batch=batch,
+            return_loss="qualifier" in return_loss,
+        )
+        entity_labels = qualification_result["prediction"]
 
         #########################
         # Compute the span loss #
         #########################
-        loss_dict = {}
-        if return_loss:
-            loss_dict = self.span_scorer.loss(spans, batch)
+        loss_dict = {"loss": 0}
+        if "ner" in return_loss:
+            ner_loss_dict = self.span_scorer.loss(spans, batch)
+            loss_dict["loss"] = loss_dict["loss"] + ner_loss_dict.pop("loss")
+            loss_dict.update(ner_loss_dict)
+
+        if "qualifier" in return_loss:
+            loss_dict["qual_loss"] = qualification_result.pop("loss")
+            loss_dict["loss"] = loss_dict["loss"] + loss_dict["qual_loss"]
 
         predictions = None
         if return_predictions:
@@ -674,10 +755,11 @@ class ContiguousEntityDecoder(torch.nn.Module):
                 # entities_confidence = entities_label_scores.detach().cpu()[-1].sigmoid().masked_fill(~entities_label, 1).prod(-1)
                 # for sample_idx, entity_idx in (~entities_label[..., 0]).masked_fill(~entities_mask.cpu(), False).nonzero(as_tuple=False).tolist():
                 for sample_idx, fragment_idx in spans_mask.nonzero(as_tuple=False).tolist():
+                    quals = entity_labels[sample_idx, fragment_idx]
                     predictions[sample_idx].append({
                         "entity_id": len(predictions[sample_idx]),
                         "confidence": spans["flat_spans_logit"][sample_idx, fragment_idx].sigmoid().item(),
-                        "label": spans["flat_spans_label"][sample_idx, fragment_idx].item(),
+                        "label": entity_labels[sample_idx, fragment_idx].tolist(),
                         "fragments": [
                             {
                                 "begin": spans["flat_spans_begin"][sample_idx, fragment_idx].item(),
@@ -698,11 +780,11 @@ class ContiguousEntityDecoder(torch.nn.Module):
                     for i, (b1, e1, l1, c, e) in enumerate(pred_entities):
                         # lookup any conflict where
                         if not any(
-                            i != j # must not be the same entity
-                            and (l1 == l2 or not if_same_label) # and must have same label if "same-label" mode
-                            and check(b1, e1, b2, e2) # and must be either overlapping or crossing
-                            and (c, e2 - b2) < (c2, e1 - b1) # and the other one is more confident or larger if same confidence
-                            for j, (b2, e2, l2, c2, _) in enumerate(pred_entities)
+                              i != j  # must not be the same entity
+                              and (l1 == l2 or not if_same_label)  # and must have same label if "same-label" mode
+                              and check(b1, e1, b2, e2)  # and must be either overlapping or crossing
+                              and (c, e2 - b2) < (c2, e1 - b1)  # and the other one is more confident or larger if same confidence
+                              for j, (b2, e2, l2, c2, _) in enumerate(pred_entities)
                         ):
                             new_entities.append(e)
                     new_predictions.append(new_entities)
@@ -712,12 +794,18 @@ class ContiguousEntityDecoder(torch.nn.Module):
             "predictions": predictions,
             **loss_dict,
             **spans,
+            **qualification_result,
         }
 
 
 @register("ensemble_contiguous_entity_decoder")
-class EnsembleContiguousEntityDecoder(torch.nn.Module):
-    def __init__(self, models, ensemble_span_scorer_module=None):
+class EnsembleContiguousQualifiedEntityDecoder(torch.nn.Module):
+    def __init__(
+          self,
+          models,
+          ensemble_span_scorer_module=None,
+          ensemble_qualification_module=None,
+    ):
         super().__init__()
 
         self.contextualizers = torch.nn.ModuleList([get_instance(m.contextualizer) for m in models])
@@ -725,7 +813,16 @@ class EnsembleContiguousEntityDecoder(torch.nn.Module):
         self.filter_predictions = models[0].filter_predictions
         if ensemble_span_scorer_module is None:
             ensemble_span_scorer_module = models[0].span_scorer.ENSEMBLE
-        self.span_scorer = get_instance({"module": ensemble_span_scorer_module, "models": [get_instance(m.span_scorer) for m in models]})
+        if ensemble_qualification_module is None:
+            ensemble_qualification_module = models[0].qualification.ENSEMBLE
+        self.span_scorer = get_instance({
+            "module": ensemble_span_scorer_module,
+            "models": [get_instance(m.span_scorer) for m in models]
+        })
+        self.qualification = get_instance({
+            "module": ensemble_qualification_module,
+            "models": [get_instance(m.qualification) for m in models]
+        })
 
     def on_training_step(self, step_idx, total):
         pass
@@ -734,6 +831,11 @@ class EnsembleContiguousEntityDecoder(torch.nn.Module):
         raise NotImplementedError("This ensemble model is not optimizable")
 
     def forward(self, ensemble_words_embed, batch=None, return_loss=False, return_predictions=False, filter_predictions=None, **kwargs):
+        if return_loss is True:
+            return_loss = {"ner", "qualifier"}
+        elif return_loss is False:
+            return_loss = set()
+
         ############################
         # Generate span candidates #
         ############################
@@ -741,18 +843,35 @@ class EnsembleContiguousEntityDecoder(torch.nn.Module):
             ensemble_words_embed, ensemble_lm_embeds = zip(*ensemble_words_embed)
         words_mask = batch['words_mask']
         contextualized_words_embed = [
-            model(words_embed, words_mask, return_all_layers=True)[self.intermediate_loss_slice if return_loss else slice(-1, None)]
+            model(words_embed, words_mask, return_all_layers=True)[slice(-1, None)]
             if model is not None else words_embed
             for model, words_embed in zip(self.contextualizers, ensemble_words_embed)
         ]
-        spans = self.span_scorer(contextualized_words_embed, words_mask, batch, force_gold=return_loss, **kwargs)
+        spans = self.span_scorer(contextualized_words_embed, words_mask, batch, force_gold="ner" in return_loss, **kwargs)
+        spans_mask, spans_begin, spans_end, spans_ner_label = (
+            spans["flat_spans_mask"],
+            spans["flat_spans_begin"],
+            spans["flat_spans_end"],
+            spans["flat_spans_label"])
+
+        ############################################
+        # Qualify span candidates with more labels #
+        ############################################
+        qualification_result = self.qualification(
+            [c[-1] for c in contextualized_words_embed], # last layer of contextualizer embeddings
+            spans_begin,
+            spans_end,
+            spans_ner_label,
+            spans_mask,
+            batch=batch,
+            return_loss="qualifier" in return_loss,
+        )
+        entity_labels = qualification_result["prediction"]
 
         #########################
         # Compute the span loss #
         #########################
-        loss_dict = {}
-        if return_loss:
-            raise NotImplementedError("This ensemble model does not return a loss")
+        loss_dict = {'loss': None}
 
         predictions = None
         if return_predictions:
@@ -760,10 +879,11 @@ class EnsembleContiguousEntityDecoder(torch.nn.Module):
             predictions = [[] for _ in batch["original_sample"]]
             if 0 not in spans_mask.shape:
                 for sample_idx, fragment_idx in spans_mask.nonzero(as_tuple=False).tolist():
+                    quals = entity_labels[sample_idx, fragment_idx]
                     predictions[sample_idx].append({
                         "entity_id": len(predictions[sample_idx]),
-                        "confidence": 1.,  # entities_confidence[sample_idx, entity_idx].item(),
-                        "label": spans["flat_spans_label"][sample_idx, fragment_idx].item(),
+                        "confidence": 1.,  # spans["flat_spans_logit"][sample_idx, fragment_idx].sigmoid().item(),
+                        "label": entity_labels[sample_idx, fragment_idx].tolist(),
                         "fragments": [
                             {
                                 "begin": spans["flat_spans_begin"][sample_idx, fragment_idx].item(),
@@ -784,11 +904,11 @@ class EnsembleContiguousEntityDecoder(torch.nn.Module):
                     for i, (b1, e1, l1, c, e) in enumerate(pred_entities):
                         # lookup any conflict where
                         if not any(
-                            i != j # must not be the same entity
-                            and (l1 == l2 or not if_same_label) # and must have same label if "same-label" mode
-                            and check(b1, e1, b2, e2) # and must be either overlapping or crossing
-                            and (c, e2 - b2) < (c2, e1 - b1) # and the other one is more confident or larger if same confidence
-                            for j, (b2, e2, l2, c2, _) in enumerate(pred_entities)
+                              i != j  # must not be the same entity
+                              and (l1 == l2 or not if_same_label)  # and must have same label if "same-label" mode
+                              and check(b1, e1, b2, e2)  # and must be either overlapping or crossing
+                              and (c, e2 - b2) < (c2, e1 - b1)  # and the other one is more confident or larger if same confidence
+                              for j, (b2, e2, l2, c2, _) in enumerate(pred_entities)
                         ):
                             new_entities.append(e)
                     new_predictions.append(new_entities)
