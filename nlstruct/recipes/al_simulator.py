@@ -117,7 +117,7 @@ class AL_Simulator():
         #mean = lambda l:sum(l)/len(l) if len(l) else 0
         maximum = lambda l:max(l) if len(l) else 0
         minimum = lambda l:min(l) if len(l) else 0
-        median = lambda l:real_median(l) if len(l)>2 else 1e8
+        median = lambda l:real_median(l) if len(l)>5 else 0
         #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
         self.scorers = {
         "ordered": {
@@ -145,7 +145,7 @@ class AL_Simulator():
                  "individual":True,
                  "frequency":"sometimes",
                  },
-        "uncertainty_median":{
+        "uncertainty_median_min5":{
                  'func':lambda i:median([1-p['confidence'] for p in self.preds[i]['entities']]),
                  "predict_before":True,
                  "individual":True,
@@ -207,6 +207,7 @@ class AL_Simulator():
             self.nb_iter += len(self.doc_order)//self.annotiter_size
             self.run_iteration(num_examples=len(self.doc_order), max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
             self.tracker.epoch_end()
+    
 
     def should_reselect_examples(self, frequency):
         """Decide whether to reselect examples or not"""
