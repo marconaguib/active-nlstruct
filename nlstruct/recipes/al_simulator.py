@@ -3,6 +3,7 @@ import json
 import os
 import string
 from typing import Dict
+from copy import deepcopy
 
 import pytorch_lightning as pl
 import torch
@@ -13,6 +14,7 @@ from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from nlstruct.data_utils import sentencize
+from nlstruct.data_utils import mappable
 from random import sample,seed,random
 from numpy import log as ln
 from statistics import median as real_median
@@ -52,10 +54,24 @@ class AL_Simulator():
         self.args = args
         self.kwargs = kwargs
         
+        # @mappable
+        # def prepare_data(doc):
+        #     doc = deepcopy(doc)
+        #     for e in doc['entities']:
+        #         attribute_labels = []
+        #         for f in e['fragments']:
+        #             f['label'] = e['label']
+        #         attribute_labels.append(e['label'])
+        #         for a in e['attributes']:
+        #             attribute_labels.append("{}:{}".format(a['label'], a['value']))
+        #         e['label'] = attribute_labels
+        #     return doc
+
         if not isinstance(dataset_name, dict):
             raise Exception("dataset must be a dict or a str")
         self.dataset = BRATDataset(
             **dataset_name,
+            #preprocess_fn=prepare_data,
         )
         self.word_regex = BASE_WORD_REGEX
         self.sentence_split_regex = BASE_SENTENCE_REGEX
