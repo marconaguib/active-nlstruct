@@ -48,7 +48,7 @@ common_log_fn = f"./common_log.csv"
 
 if not args.read_logs:
     with open(common_log_fn, 'w') as log_file:
-        log_file.write('corpus;batch;score;type_f1;xp_name;word_count\n')
+        log_file.write('corpus;batch;score;type_f1;xp_name;word_count;seed\n')
         for corpus in args.corpus_name_or_names :
             for xp_name_prefix in args.strategies:
                 for xp_name_full in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name_prefix+'*_1.json')):
@@ -57,6 +57,7 @@ if not args.read_logs:
                     for fn in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name+'_*json')):
                         fn_docselection = fn.replace('checkpoints','docselection').replace('.json','.txt')
                         batchname = fn[:-5].split('_')[-1]
+                        seed = re.search(r'(?<=seed)\d+',fn).group(0)
                         with open(fn,'r') as f:
                             test_dico = json.load(f)
                             f1_micro = test_dico["results"]['exact']['f1']
@@ -72,15 +73,19 @@ if not args.read_logs:
                                 word_count = len(s.split())
                             else:
                                 word_count = -1
-                            log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix};{word_count}\n')
-                            log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix};{word_count}\n')
+                            log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix};{word_count};{seed}\n')
+                            log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix};{word_count};{seed}\n')
     
 
 dataset = pd.read_csv(common_log_fn,sep=';')
-dataset['batch_str'] = dataset['batch'].apply(str)
 dataset.sort_values(['batch','xp_name'],inplace=True)
-print(dataset)
+print(dataset.head(20))
 
+#mean the word_count over every batch
+dataset['word_count'] = dataset.groupby(['corpus','type_f1','xp_name','batch'])['word_count'].transform('mean')
+
+#cumsum the word_count over every batch and seed
+dataset['word_count'] = dataset.groupby(['corpus','type_f1','xp_name','seed'])['word_count'].transform('cumsum')
 
 
 def plot_iterations(data,**kwargs):
@@ -90,8 +95,8 @@ def plot_all(data, **kwargs):
     value_to_mean = kwargs.pop('value','score')
     plt.axhline(y=data[value_to_mean].max(), **kwargs)
 
-g = sns.FacetGrid(data=dataset, col='corpus', row='type_f1',sharey=True)
-g.map_dataframe(plot_iterations, x='batch_str',y="score", hue='xp_name', hue_order=dataset['xp_name'].unique())
+g = sns.FacetGrid(data=dataset, col='corpus', row='type_f1',sharey=True, sharex=False)
+g.map_dataframe(plot_iterations, x='word_count',y="score", hue='xp_name', hue_order=dataset['xp_name'].unique())
 g.map_dataframe(plot_all,value='score',ls='--',c='black')
 g.add_legend(title='Selection strategy',)
 
