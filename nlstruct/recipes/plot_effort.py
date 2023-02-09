@@ -64,7 +64,7 @@ if not args.read_logs:
                             log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix}\n')
                             log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix}\n')
                     word_count = 0
-                    for fn in glob.glob(os.path.join(f'{args.prefix}/docselection/{corpus}', xp_name+' *txt')):
+                    for fn in glob.glob(os.path.join(f'{args.prefix}/docselection/{corpus}', xp_name+'_*txt')):
                         batchname = fn[:-4].split(' ')[-1]
                         with open(fn,'r') as f:
                             s = f.read()
