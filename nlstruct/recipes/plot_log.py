@@ -1,9 +1,10 @@
 import argparse
+from matplotlib import ticker
 import seaborn as sns
 import matplotlib.pyplot as plt
 import pandas as pd
 
-sns.set_theme()
+sns.set_style("darkgrid", {"grid.color": ".6", "grid.linestyle": ":","grid.linefreq":1})
 parser = argparse.ArgumentParser()
 parser.add_argument('-w','--word_count', action='store_true', help='plot word count instead of batch', default=False)
 parser.add_argument('-i','--input', type=str, help='input file',default='./common_log.csv')
@@ -26,14 +27,29 @@ def plot_iterations(data,**kwargs):
 
 def plot_all(data, **kwargs):
     value_to_mean = kwargs.pop('value','score')
-    plt.axhline(y=data[value_to_mean].max(), **kwargs)
+    plt.axhline(y=data[value_to_mean].max(), **kwargs, label='Best score')
 
 g = sns.FacetGrid(data=dataset, col='corpus', row='type_f1',sharey=True, sharex=False)
 g.map_dataframe(plot_iterations, x= 'batch' if not args.word_count else 'word_count', y="score", hue='xp_name', hue_order=dataset['xp_name'].unique())
 g.map_dataframe(plot_all,value='score',ls='--',c='black')
 g.add_legend(title='Selection strategy',)
 
+#get the titles of each facet
+g.set_titles(row_template='{row_name}', col_template='{col_name}')
+
 ax = plt.gca()
-ax.set_ylim(0,1)
+# remove the facetgrid legend
+g.legend.remove()
+ax.yaxis.set_major_locator(ticker.MultipleLocator(0.05))
+for ax in g.axes.flat:
+    ax.set_ylim(0,1)
+    if args.word_count:
+        ax.set_xlim(0,1250)
+    ax.set_xlabel('Iterations' if not args.word_count else 'Word count')
+    ax.set_ylabel('F1 score')
+    
+g.axes.flat[len(g.col_names)-1].legend(loc='lower right')
+
+plt.tight_layout()
 plt.show()
 
