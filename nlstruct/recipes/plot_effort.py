@@ -22,6 +22,30 @@ parser.add_argument('-p','--prefix', type=str, help='global prefix to where to f
 args = parser.parse_args()
 common_log_fn = f"./common_log.csv"
 
+import seaborn as sns
+import matplotlib
+import matplotlib.pyplot as plt
+import numpy as np
+import re
+import os
+import glob
+import pandas as pd
+import json
+import argparse
+
+
+
+sns.set_theme()
+
+parser = argparse.ArgumentParser()
+parser.add_argument('-c','--corpus_name_or_names', type=str, nargs='+', help='names of the corpora to do the expetiment on',default=[])
+parser.add_argument('-r','--read_logs', action='store_true', help='read from pre-existing log file', default=False)
+parser.add_argument('-s','--strategies', type=str, nargs='+', help='strategies to plot',default=[])
+parser.add_argument('-p','--prefix', type=str, help='global prefix to where to find checkpoints and logs',default='.')
+
+args = parser.parse_args()
+common_log_fn = f"./common_log.csv"
+
 if not args.read_logs:
     with open(common_log_fn, 'w') as log_file:
         log_file.write('corpus;batch;score;type_f1;xp_name\n')
@@ -39,6 +63,17 @@ if not args.read_logs:
                             f1_macro = np.mean(other_scores) if len(other_scores) else f1_micro
                             log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix}\n')
                             log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix}\n')
+                    word_count = 0
+                    for fn in glob.glob(os.path.join(f'{args.prefix}/docselection/{corpus}', xp_name+' *txt')):
+                        batchname = fn[:-4].split(' ')[-1]
+                        with open(fn,'r') as f:
+                            s = f.read()
+                        #remove lines beginning with "====" or "---"
+                        s = re.sub(r'^=+.*$','',s,flags=re.MULTILINE)  
+                        s = re.sub(r'^-+.*$','',s,flags=re.MULTILINE)
+                        #count words
+                        word_count += len(s.split())
+                        print(f"Done {corpus} {xp_name} {batchname} {word_count}")
     
 
 dataset = pd.read_csv(common_log_fn,sep=';')
