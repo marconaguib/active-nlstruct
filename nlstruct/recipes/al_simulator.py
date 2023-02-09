@@ -262,7 +262,7 @@ class AL_Simulator():
         else:
             assert self.selection_strategy == 'cluster', f"clustering is the only non-individual strategy available"
             print(f'Clustering docs based on vocab')
-            self.cluster_and_rearrange()
+            self.cluster_vocab_and_rearrange()
 
     def write_docselection(self, filename):
         """Write the selected examples in a file"""
