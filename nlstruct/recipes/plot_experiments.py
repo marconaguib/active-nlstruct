@@ -42,6 +42,7 @@ parser.add_argument('-c','--corpus_name_or_names', type=str, nargs='+', help='na
 parser.add_argument('-r','--read_logs', action='store_true', help='read from pre-existing log file', default=False)
 parser.add_argument('-s','--strategies', type=str, nargs='+', help='strategies to plot',default=[])
 parser.add_argument('-p','--prefix', type=str, help='global prefix to where to find checkpoints and logs',default='.')
+parser.add_argument('-w','--word_count', action='store_true', help='plot word count instead of batch', default=False)
 
 args = parser.parse_args()
 common_log_fn = f"./common_log.csv"
@@ -96,7 +97,7 @@ def plot_all(data, **kwargs):
     plt.axhline(y=data[value_to_mean].max(), **kwargs)
 
 g = sns.FacetGrid(data=dataset, col='corpus', row='type_f1',sharey=True, sharex=False)
-g.map_dataframe(plot_iterations, x='word_count',y="score", hue='xp_name', hue_order=dataset['xp_name'].unique())
+g.map_dataframe(plot_iterations, x= 'batch' if not args.word_count else 'word_count', y="score", hue='xp_name', hue_order=dataset['xp_name'].unique())
 g.map_dataframe(plot_all,value='score',ls='--',c='black')
 g.add_legend(title='Selection strategy',)
 
