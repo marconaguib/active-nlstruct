@@ -48,32 +48,29 @@ common_log_fn = f"./common_log.csv"
 
 if not args.read_logs:
     with open(common_log_fn, 'w') as log_file:
-        log_file.write('corpus;batch;score;type_f1;xp_name\n')
+        log_file.write('corpus;batch;score;type_f1;xp_name;word_count\n')
         for corpus in args.corpus_name_or_names :
             for xp_name_prefix in args.strategies:
                 for xp_name_full in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name_prefix+'*_1.json')):
                     xp_name = os.path.basename(xp_name_full.replace('_1.json',''))
     
                     for fn in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name+'_*json')):
+                        fn_docselection = fn.replace('checkpoints','docselection').replace('.json','.txt')
                         batchname = fn[:-5].split('_')[-1]
                         with open(fn,'r') as f:
                             test_dico = json.load(f)
                             f1_micro = test_dico["results"]['exact']['f1']
                             other_scores = [v for k,v in test_dico['results']['exact'].items() if k.endswith('_f1')]
                             f1_macro = np.mean(other_scores) if len(other_scores) else f1_micro
-                            log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix}\n')
-                            log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix}\n')
-                    word_count = 0
-                    for fn in glob.glob(os.path.join(f'{args.prefix}/docselection/{corpus}', xp_name+'_*txt')):
-                        batchname = fn[:-4].split(' ')[-1]
-                        with open(fn,'r') as f:
-                            s = f.read()
-                        #remove lines beginning with "====" or "---"
-                        s = re.sub(r'^=+.*$','',s,flags=re.MULTILINE)  
-                        s = re.sub(r'^-+.*$','',s,flags=re.MULTILINE)
-                        #count words
-                        word_count += len(s.split())
-                        print(f"Done {corpus} {xp_name} {batchname} {word_count}")
+                            with open(fn_docselection,'r') as f:
+                                s = f.read()
+                            #remove lines beginning with "====" or "---"
+                            s = re.sub(r'^=+.*$','',s,flags=re.MULTILINE)
+                            s = re.sub(r'^-+.*$','',s,flags=re.MULTILINE)
+                            #count words
+                            word_count = len(s.split())
+                            log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix};{word_count}\n')
+                            log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix};{word_count}\n')
     
 
 dataset = pd.read_csv(common_log_fn,sep=';')
