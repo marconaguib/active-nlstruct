@@ -114,7 +114,7 @@ class AL_Simulator():
         self.gpus = gpus
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
 
-        #mean = lambda l:sum(l)/len(l) if len(l) else 0
+        mean_3 = lambda l:sum(l)/len(l) if len(l)>3 else 0
         maximum = lambda l:max(l) if len(l) else 0
         minimum = lambda l:min(l) if len(l) else 0
         median = lambda l:real_median(l) if len(l)>5 else 0
@@ -147,6 +147,12 @@ class AL_Simulator():
                  },
         "uncertainty_median_min5":{
                  'func':lambda i:median([1-p['confidence'] for p in self.preds[i]['entities']]),
+                 "predict_before":True,
+                 "individual":True,
+                 "frequency":"sometimes",
+                 },
+        "uncertainty_mean_min3":{
+                 'func':lambda i:mean_3([1-p['confidence'] for p in self.preds[i]['entities']]),
                  "predict_before":True,
                  "individual":True,
                  "frequency":"sometimes",
