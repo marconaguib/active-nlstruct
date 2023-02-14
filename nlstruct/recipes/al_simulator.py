@@ -12,6 +12,7 @@ from rich_logger import RichTableLogger
 import pandas as pd
 from nlstruct import BRATDataset, MetricsCollection, get_instance, get_config, InformationExtractor
 from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
+from al_utils import rearrange, matricize
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from nlstruct.data_utils import sentencize
@@ -21,6 +22,7 @@ from numpy import log as ln
 from statistics import median as real_median
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
+
 
 shared_cache = {}
 
@@ -240,52 +242,12 @@ class AL_Simulator():
         vectorizer = TfidfVectorizer()
         X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
         kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-        def rearrange(indices, labels):
-            assert len(indices) == len(labels)
-            indices_by_label = {label: [] for label in set(labels)}
-            for i, label in zip(indices, labels):
-                indices_by_label[label].append(i)
-            while len(indices):
-                for label in indices_by_label:
-                    if len(indices_by_label[label]):
-                        yield indices_by_label[label].pop(0)
-                        indices.pop(0)
-                    else:
-                        del indices_by_label[label]
-                        break
         self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
 
     def cluster_preds_and_rearrange(self):
         """Cluster the predictions and rearrange the doc_order accordingly"""
-        # X = [self.preds[i]['entities'] for i in self.doc_order]
-        #X to a matrix with 1s and 0s if the entity is present or not
-        # kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-        # get the labels of all the predictions
         X = [[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order]
-        def matricize(X):
-            """Transform a list of lists into a matrix with 1s and 0s"""
-            labels = set([l for x in X for l in x])
-            matrix = np.zeros((len(X), len(labels)))
-            for i, x in enumerate(X):
-                for l in x:
-                    matrix[i, list(labels).index(l)] = x.count(l)
-            return matrix
         kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(matricize(X))
-        def rearrange(indices, labels):
-            indices = list(indices)
-            labels = list(labels)
-            assert len(indices) == len(labels)
-            indices_by_label = {label: [] for label in set(labels)}
-            for i, label in zip(indices, labels):
-                indices_by_label[label].append(i)
-            while len(indices):
-                for label in indices_by_label:
-                    if len(indices_by_label[label]):
-                        yield indices_by_label[label].pop(0)
-                        indices.pop(0)
-                    else:
-                        del indices_by_label[label]
-                        break
         self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
 
     def select_examples(self, scorer):
