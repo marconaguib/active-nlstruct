@@ -181,11 +181,16 @@ class AL_Simulator():
                  "individual":True,
                 "frequency":"sometimes",
                  },
-        "cluster": {
+        "cluster_vocab": {
                 "predict_before":False,
                 "individual":False,
                 "frequency":"once",
                 },  
+        "cluster_preds": {
+                "predict_before":True,
+                "individual":False,
+                "frequency":"sometimes",
+                },
         }
 
     def run_simulation(self, num_iterations, max_steps, xp_name):
@@ -249,6 +254,26 @@ class AL_Simulator():
                     del indices_by_label[label]
                     break
         self.doc_order = list(self.rearrange_elements())
+    
+    def cluster_preds_and_rearrange(self):
+        """Cluster the predictions and rearrange the doc_order accordingly"""
+        X = [self.preds[i]['entities'] for i in self.doc_order]
+        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+        indices = list(self.doc_order)
+        labels = list(kmeans.labels_)
+        assert len(indices) == len(labels)
+        indices_by_label = {label: [] for label in set(labels)}
+        for i, label in zip(indices, labels):
+            indices_by_label[label].append(i)
+        while len(indices):
+            for label in indices_by_label:
+                if len(indices_by_label[label]):
+                    yield indices_by_label[label].pop(0)
+                    indices.pop(0)
+                else:
+                    del indices_by_label[label]
+                    break
+        self.doc_order = list(self.rearrange_elements())
 
     def select_examples(self, scorer):
         """Select examples to annotate based on a given strategy"""
@@ -266,9 +291,28 @@ class AL_Simulator():
                     self.preds = list(self.model.predict(self.pool))
             self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
         else:
-            assert self.selection_strategy == 'cluster', f"clustering is the only non-individual strategy available"
-            print(f'Clustering docs based on vocab')
-            self.cluster_vocab_and_rearrange()
+            # assert self.selection_strategy == 'cluster', f"clustering is the only non-individual strategy available"
+            # print(f'Clustering docs based on vocab')
+            # self.cluster_vocab_and_rearrange()
+            print(f"Rearranging following the {self.selection_strategy} strategy.")
+            scorer = self.scorers[self.selection_strategy]
+            if scorer['predict_before'] :
+                if self.nb_iter <= 1 :
+                    print('But too early to count on the model to perform this strategy. Selecting randomly.')
+                    scorer = self.scorers['random']
+                else :
+                    print('Computing the new model predictions')
+                    if self.gpus:
+                        self.model.cuda()
+                    self.preds = list(self.model.predict(self.pool))
+            if self.selection_strategy == 'cluster_vocab':
+                self.cluster_vocab_and_rearrange()
+            elif self.selection_strategy == 'cluster_preds':
+                self.cluster_preds_and_rearrange()
+            else:
+                raise ValueError(f"Unknown selection strategy {self.selection_strategy}")
+            
+            
 
     def write_docselection(self, filename):
         """Write the selected examples in a file"""
