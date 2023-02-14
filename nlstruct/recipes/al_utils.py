@@ -1,5 +1,9 @@
+import numpy as np
+
 def rearrange(indices, labels):
     """Rearrange a list of indices according to a list of labels"""
+    indices = list(indices)
+    labels = list(labels)
     assert len(indices) == len(labels)
     indices_by_label = {label: [] for label in set(labels)}
     for i, label in zip(indices, labels):

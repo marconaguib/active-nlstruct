@@ -237,58 +237,29 @@ class AL_Simulator():
             every_n = 1e8
         return self.doc_order is None or (self.nb_iter-1)<first_n or (self.nb_iter-first_n)%every_n==0
     
-    def cluster_vocab_and_rearrange(self):
-        """Cluster the vocabulary and rearrange the doc_order accordingly"""
-        vectorizer = TfidfVectorizer()
-        X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
-        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-        self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
-
-    def cluster_preds_and_rearrange(self):
-        """Cluster the predictions and rearrange the doc_order accordingly"""
-        X = [[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order]
-        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(matricize(X))
-        self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
-
     def select_examples(self, scorer):
         """Select examples to annotate based on a given strategy"""
-        if scorer['individual']:
-            print(f"Scoring following the {self.selection_strategy} strategy.")
-            scorer = self.scorers[self.selection_strategy]
-            if scorer['predict_before'] :  
-                if self.nb_iter <= 1 :
-                    print('But too early to count on the model to perform this strategy. Selecting randomly.')
-                    scorer = self.scorers['random']
-                else :
-                    print('Computing the new model predictions')
-                    if self.gpus:
-                        self.model.cuda()
-                    self.preds = list(self.model.predict(self.pool))
+        print(("Scoring" if scorer['individual'] else "Rearranging") + f" following the {self.selection_strategy} strategy.")
+        if scorer['predict_before'] :  
+            if self.nb_iter <= 1 :
+                print('But too early to count on the model to perform this strategy. Selecting randomly.')
+                self.doc_order = sorted(self.doc_order, key=self.scorers['random']['func'], reverse=1)
+                return
+            else :
+                print('Computing the new model predictions')
+                if self.gpus:
+                    self.model.cuda()
+                self.preds = list(self.model.predict(self.pool))
+        if 'func' in scorer.keys():
             self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
         else:
-            # assert self.selection_strategy == 'cluster', f"clustering is the only non-individual strategy available"
-            # print(f'Clustering docs based on vocab')
-            # self.cluster_vocab_and_rearrange()
-            print(f"Rearranging following the {self.selection_strategy} strategy.")
-            scorer = self.scorers[self.selection_strategy]
-            if scorer['predict_before'] :
-                if self.nb_iter <= 1 :
-                    print('But too early to count on the model to perform this strategy. Selecting randomly.')
-                    scorer = self.scorers['random']
-                    self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
-                    return
-                else :
-                    print('Computing the new model predictions')
-                    if self.gpus:
-                        self.model.cuda()
-                    self.preds = list(self.model.predict(self.pool))
             if self.selection_strategy == 'cluster_vocab':
-                self.cluster_vocab_and_rearrange()
+                vectorizer = TfidfVectorizer()
+                X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
             elif self.selection_strategy == 'cluster_preds':
-                self.cluster_preds_and_rearrange()
-            else:
-                raise ValueError(f"Unknown selection strategy {self.selection_strategy}")
-            
+                X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
+            kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+            self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
             
 
     def write_docselection(self, filename):
