@@ -260,7 +260,11 @@ class AL_Simulator():
                 X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
             kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
             self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
-            
+        print("last clustering")
+        vectorizer = TfidfVectorizer()
+        X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order[:100]])
+        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+        self.doc_order = list(rearrange(self.doc_order[:100], kmeans.labels_)) + self.doc_order[100:]            
 
     def write_docselection(self, filename):
         """Write the selected examples in a file"""
