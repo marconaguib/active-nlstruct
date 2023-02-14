@@ -240,22 +240,21 @@ class AL_Simulator():
         vectorizer = TfidfVectorizer()
         X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
         kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-        indices = list(self.doc_order)
-        labels = list(kmeans.labels_)
-        assert len(indices) == len(labels)
-        indices_by_label = {label: [] for label in set(labels)}
-        for i, label in zip(indices, labels):
-            indices_by_label[label].append(i)
-        while len(indices):
-            for label in indices_by_label:
-                if len(indices_by_label[label]):
-                    yield indices_by_label[label].pop(0)
-                    indices.pop(0)
-                else:
-                    del indices_by_label[label]
-                    break
-        self.doc_order = list(self.rearrange_elements())
-    
+        def rearrange(indices, labels):
+            assert len(indices) == len(labels)
+            indices_by_label = {label: [] for label in set(labels)}
+            for i, label in zip(indices, labels):
+                indices_by_label[label].append(i)
+            while len(indices):
+                for label in indices_by_label:
+                    if len(indices_by_label[label]):
+                        yield indices_by_label[label].pop(0)
+                        indices.pop(0)
+                    else:
+                        del indices_by_label[label]
+                        break
+        self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
+        
     def cluster_preds_and_rearrange(self):
         """Cluster the predictions and rearrange the doc_order accordingly"""
         # X = [self.preds[i]['entities'] for i in self.doc_order]
@@ -272,21 +271,20 @@ class AL_Simulator():
                     matrix[i, list(labels).index(l)] = x.count(l)
             return matrix
         kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(matricize(X))
-        indices = list(self.doc_order)
-        labels = list(kmeans.labels_)
-        assert len(indices) == len(labels)
-        indices_by_label = {label: [] for label in set(labels)}
-        for i, label in zip(indices, labels):
-            indices_by_label[label].append(i)
-        while len(indices):
-            for label in indices_by_label:
-                if len(indices_by_label[label]):
-                    yield indices_by_label[label].pop(0)
-                    indices.pop(0)
-                else:
-                    del indices_by_label[label]
-                    break
-        self.doc_order = list(self.rearrange_elements())
+        def rearrange(indices, labels):
+            assert len(indices) == len(labels)
+            indices_by_label = {label: [] for label in set(labels)}
+            for i, label in zip(indices, labels):
+                indices_by_label[label].append(i)
+            while len(indices):
+                for label in indices_by_label:
+                    if len(indices_by_label[label]):
+                        yield indices_by_label[label].pop(0)
+                        indices.pop(0)
+                    else:
+                        del indices_by_label[label]
+                        break
+        self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
 
     def select_examples(self, scorer):
         """Select examples to annotate based on a given strategy"""
