@@ -257,8 +257,20 @@ class AL_Simulator():
     
     def cluster_preds_and_rearrange(self):
         """Cluster the predictions and rearrange the doc_order accordingly"""
-        X = [self.preds[i]['entities'] for i in self.doc_order]
-        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+        # X = [self.preds[i]['entities'] for i in self.doc_order]
+        #X to a matrix with 1s and 0s if the entity is present or not
+        # kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
+        # get the labels of all the predictions
+        X = [[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order]
+        def matricize(X):
+            """Transform a list of lists into a matrix with 1s and 0s"""
+            labels = set([l for x in X for l in x])
+            matrix = np.zeros((len(X), len(labels)))
+            for i, x in enumerate(X):
+                for l in x:
+                    matrix[i, list(labels).index(l)] = x.count(l)
+            return matrix
+        kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(matricize(X))
         indices = list(self.doc_order)
         labels = list(kmeans.labels_)
         assert len(indices) == len(labels)
