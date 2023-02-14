@@ -254,7 +254,7 @@ class AL_Simulator():
                         del indices_by_label[label]
                         break
         self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
-        
+
     def cluster_preds_and_rearrange(self):
         """Cluster the predictions and rearrange the doc_order accordingly"""
         # X = [self.preds[i]['entities'] for i in self.doc_order]
@@ -272,6 +272,8 @@ class AL_Simulator():
             return matrix
         kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(matricize(X))
         def rearrange(indices, labels):
+            indices = list(indices)
+            labels = list(labels)
             assert len(indices) == len(labels)
             indices_by_label = {label: [] for label in set(labels)}
             for i, label in zip(indices, labels):
@@ -311,6 +313,8 @@ class AL_Simulator():
                 if self.nb_iter <= 1 :
                     print('But too early to count on the model to perform this strategy. Selecting randomly.')
                     scorer = self.scorers['random']
+                    self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
+                    return
                 else :
                     print('Computing the new model predictions')
                     if self.gpus:
