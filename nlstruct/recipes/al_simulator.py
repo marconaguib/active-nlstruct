@@ -161,19 +161,19 @@ class AL_Simulator():
         
         self.samplers = {
             "random": {
-                'sample' : lambda size:random.sample(self.pool.keys(), size),
+                'sample' : lambda size:random.sample(range(len(self.pool)), size),
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
             "random1": {
-                'sample' : lambda size:random.sample(self.pool.keys(), size),
+                'sample' : lambda size:random.sample(range(len(self.pool)), size),
                 'visibility' : 1, 'predict_before' : False,
             },
             "ordered": {
-                'sample' : lambda size:list(self.pool.keys())[:size],
+                'sample' : lambda size:range(len(self.pool))[:size],
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
             "length": {
-                'sample' : lambda size:sorted(self.pool.keys(), key=lambda i:len(self.pool[i]['text']), reverse=True)[:size],
+                'sample' : lambda size:sorted(range(len(self.pool)), key=lambda i:len(self.pool[i]['text']), reverse=True)[:size],
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
             "cluster_vocab": {
