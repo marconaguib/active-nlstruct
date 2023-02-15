@@ -113,7 +113,7 @@ class AL_Simulator():
         self.dataset.train_data = []
         self.queue = []
         #pool needs to be a dict to be able to remove elements properly
-        self.pool = {i:s for i,s in enumerate(self.pool)}
+        #self.pool = {i:s for i,s in enumerate(self.pool)}
         self.nb_iter = 0
         self.gpus = gpus
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
@@ -136,27 +136,27 @@ class AL_Simulator():
         
         def sample_diverse_vocab(size):
             vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            X = vectorizer.fit_transform([d['text'] for d in self.pool])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
+            return [random.choice([i for i in range(len(self.pool)) if kmeans.labels_[i]==c]) for c in range(size)]
         def sample_diverse_pred(size):
             X = matricize([[e['label'] for e in p['entities']] for p in self.preds])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
+            return [random.choice([i for i in range(len(self.pool)) if kmeans.labels_[i]==c]) for c in range(size)]
         def sample_most_common_vocab(size):
             vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            X = vectorizer.fit_transform([d['text'] for d in self.pool])
             center = np.mean(X, axis=0)
             dist = np.sum((X - center)**2, axis=1)
             sorted_idx = np.argsort(dist)
             return [self.pool[i] for i in sorted_idx[:size]]
         def uncertainty_mean_for_most_common_vocab(size):
             vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            X = vectorizer.fit_transform([d['text'] for d in self.pool])
             center = np.mean(X, axis=0)
             dist = np.sum((X - center)**2, axis=1)
             sorted_idx = np.argsort(dist)
-            most_common_docs = [self.pool[i] for i in sorted_idx[:size]]
+            #most_common_docs = [self.pool[i] for i in sorted_idx[:size]]
             return sorted(sorted_idx[:50], key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
         
         self.samplers = {
@@ -202,7 +202,7 @@ class AL_Simulator():
         #add generic scorers
         } | {
             scorer : {
-            'sample' : lambda size: sorted(self.pool.keys(), key=pred_scorers[scorer], reverse=True)[:size],
+            'sample' : lambda size: sorted(range(len(self.pool)), key=pred_scorers[scorer], reverse=True)[:size],
             'visibility' : 1,
             'predict_before' : True,
             }
@@ -259,10 +259,13 @@ class AL_Simulator():
                 print('Computing the new model predictions')
                 if self.gpus:
                     self.model.cuda()
-                self.preds = list(self.model.predict(list(self.pool.values())))
+                self.preds = list(self.model.predict(list(self.pool)))
         for _ in range(sampler['visibility']):
             selected_examples = sampler['sample'](self.annotiter_size)
-            self.queue.append([self.pool.pop(e) for e in selected_examples])
+            res =[]
+            for e in sorted(selected_examples, reverse=True):
+                res.append(self.pool.pop(e))
+            self.queue.append(res)
             self.queue_entry_counter+=1
             self.write_docselection()
                 
@@ -278,7 +281,7 @@ class AL_Simulator():
         self.dataset.train_data.extend([e for q in self.queue for e in q])
         self.queue = []
         # add all the pool
-        self.dataset.train_data.extend(self.pool.values())
+        self.dataset.train_data.extend(self.pool)
         self.pool = {}
 
     def go(self, max_steps):
