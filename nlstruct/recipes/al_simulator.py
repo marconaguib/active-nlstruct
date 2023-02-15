@@ -112,7 +112,6 @@ class AL_Simulator():
                    ]
         self.dataset.val_data = []
         self.dataset.train_data = []
-        #self.doc_order = range(len(self.pool))
         self.queue = []
         #pool needs to be a dict to be able to remove elements properly
         self.pool = {i:s for i,s in enumerate(self.pool)}
@@ -121,28 +120,12 @@ class AL_Simulator():
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
         self.queue_entry_counter = 0
 
+        # generic scorers
         mean_3 = lambda l:sum(l)/len(l) if len(l)>3 else 0
         maximum = lambda l:max(l) if len(l) else 0
         minimum = lambda l:min(l) if len(l) else 0
         median_5 = lambda l:real_median(l) if len(l)>5 else 0
-        
-
-        def sample_random(size):
-            return list(random.sample(self.pool.keys(), size))
-        def sample_ordered(size):
-            return list(self.pool.keys())[:size]
-        def sample_diverse_vocab(size):
-            vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
-            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
-        def sample_diverse_pred(size):
-            X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
-            return [random.choice([i for i in self.pool if self.preds[i]['entities'][0]['label']==c]) for c in range(size)]
-        
-        # generic scorers
         pred_scorers = {
-            "length": lambda i:len(self.pool[i]['text']),
             "pred_variety": lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
             "uncertainty_median_min5": lambda i:median_5([1-p['confidence'] for p in self.preds[i]['entities']]),
             "uncertainty_mean_min3": lambda i:mean_3([1-p['confidence'] for p in self.preds[i]['entities']]),
@@ -152,42 +135,80 @@ class AL_Simulator():
             "pred_num": lambda i:len(self.preds[i]['entities']),
         }
         
+        def sample_diverse_vocab(size):
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
+            return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
+        def sample_diverse_pred(size):
+            X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
+            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
+            return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
+        def sample_most_common_vocab(size):
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            center = np.mean(X, axis=0)
+            dist = np.sum((X - center)**2, axis=1)
+            sorted_idx = np.argsort(dist)
+            return [self.pool[i] for i in sorted_idx[:size]]
+        def uncertainty_mean_for_most_common_vocab(size):
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            center = np.mean(X, axis=0)
+            dist = np.sum((X - center)**2, axis=1)
+            sorted_idx = np.argsort(dist)
+            most_common_docs = [self.pool[i] for i in sorted_idx[:size]]
+            return sorted(sorted_idx[:50], key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
+        
         self.samplers = {
             "random": {
-                'sample' : sample_random,
-                'visibility' : 10,
-                'predict_before' : False,
+                'sample' : lambda size:random.sample(self.pool.keys(), size),
+                'visibility' : 10, 'predict_before' : False,
             },
             "random1": {
-                'sample' : sample_random,
-                'visibility' : 1,
-                'predict_before' : False,
+                'sample' : lambda size:random.sample(self.pool.keys(), size),
+                'visibility' : 1, 'predict_before' : False,
             },
             "ordered": {
-                'sample' : sample_ordered,
-                'visibility' : 10,
-                'predict_before' : False,
+                'sample' : lambda size:list(self.pool.keys())[:size],
+                'visibility' : 10, 'predict_before' : False,
+            },
+            "length": {
+                'sample' : lambda size:sorted(self.pool.keys(), key=lambda i:len(self.pool[i]['text']), reverse=True)[:size],
+                'visibility' : 10, 'predict_before' : False,
             },
             "cluster_vocab": {
                 'sample' : sample_diverse_vocab,
-                'visibility' : 10,
-                'predict_before' : False,
+                'visibility' : 10, 'predict_before' : False,
+            },
+            "dense_vocab": {
+                'sample' : sample_most_common_vocab,
+                'visibility' : 10, 'predict_before' : False,
             },
             "cluster_pred": {
                 'sample' : sample_diverse_pred,
                 'visibility' : 1,
                 'predict_before' : True,
-            }
-            | # add the generic scorers
-            {scorer : 
-                {
-                'sample' : lambda size: sorted(self.pool.keys(), key=pred_scorers[scorer], reverse=True)[:size],
+            },
+            "dense_uncertainty": {
+                'sample' : uncertainty_mean_for_most_common_vocab,
                 'visibility' : 1,
                 'predict_before' : True,
-                } for scorer in pred_scorers.keys()
+            },
+            "dense_uncertainty+cluster_pred": {
+                'sample' : lambda size:uncertainty_mean_for_most_common_vocab(size//2) + sample_diverse_pred(size//2),
+                'visibility' : 1,
+                'predict_before' : True,
+            },
+        #add generic scorers
+        } | {scorer : 
+            {
+            'sample' : lambda size: sorted(self.pool.keys(), key=pred_scorers[scorer], reverse=True)[:size],
+            'visibility' : 1,
+            'predict_before' : True,
+            } for scorer in pred_scorers.keys()
             }
 
-        }
 
     def run_simulation(self, num_iterations, max_steps, xp_name):
         """Run the simulation for a given number of iterations."""
