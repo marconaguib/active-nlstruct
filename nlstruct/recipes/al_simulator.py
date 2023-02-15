@@ -7,6 +7,7 @@ from copy import deepcopy
 
 import numpy as np
 import pytorch_lightning as pl
+from sklearn.metrics import pairwise_distances, pairwise_distances_argmin_min
 import torch
 from rich_logger import RichTableLogger
 import pandas as pd
@@ -138,18 +139,23 @@ class AL_Simulator():
             vectorizer = TfidfVectorizer()
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            return [random.choice([i for i in range(len(self.pool)) if kmeans.labels_[i]==c]) for c in range(size)]
+            centers = kmeans.cluster_centers_
+            closest, _ = pairwise_distances_argmin_min(centers, X)
+            return closest
         def sample_diverse_pred(size):
             X = matricize([[e['label'] for e in p['entities']] for p in self.preds])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            return [random.choice([i for i in range(len(self.pool)) if kmeans.labels_[i]==c]) for c in range(size)]
+            centers = kmeans.cluster_centers_
+            closest, _ = pairwise_distances_argmin_min(centers, X)
+            return closest
         def sample_most_common_vocab(size):
             vectorizer = TfidfVectorizer()
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            center = np.mean(X, axis=0)
-            dist = [np.linalg.norm(X[i]-center) for i in range(len(self.pool))]
-            sorted_idx = np.argsort(dist)
-            return sorted_idx[:size]
+            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
+            centers = kmeans.cluster_centers_
+            most_common_center = np.argmax([sum(kmeans.labels_==c) for c in range(size)])
+            closest = pairwise_distances(centers[most_common_center].reshape(1,-1), X).argsort()[0][:size]
+            return closest
         def uncertainty_mean_for_most_common_vocab(size):
             vectorizer = TfidfVectorizer()
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
