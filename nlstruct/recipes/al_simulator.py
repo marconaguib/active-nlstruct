@@ -215,27 +215,32 @@ class AL_Simulator():
         """Run the simulation for a given number of iterations."""
         assert self.selection_strategy in self.samplers.keys(), f"Unknown selection strategy {self.selection_strategy}"
         sampler = self.samplers[self.selection_strategy]
+        self.xp_name = xp_name
         for _ in range(self.k):
             if len(self.queue) == 0:
-                self.fill_queue(sampler,xp_name)
+                self.fill_queue(sampler)
             self.annotate_one_queue_element(to_dev_split=True)
         for _ in range(num_iterations):
             self.tracker.epoch_start()
             self.nb_iter += 1
             if len(self.queue) == 0:
-                self.fill_queue(sampler,xp_name)
+                self.fill_queue(sampler)
             self.annotate_one_queue_element()
-            self.go(max_steps=max_steps, xp_name=xp_name)
+            self.go(max_steps=max_steps)
             self.tracker.epoch_end()
         if self.and_train_on_all_data:
             self.tracker.epoch_start()
             self.nb_iter += len(self.pool)//self.annotiter_size
             self.annotate_all_pool()
-            self.go(max_steps=max_steps, xp_name=xp_name)
+            self.go(max_steps=max_steps)
             self.tracker.epoch_end()
     
-    def write_docselection(self, filename):
+    def write_docselection(self):
             """Write the selected examples in a file"""
+            if self.queue_entry_counter>self.k:
+                filename = f'docselection/{self.xp_name}_{self.queue_entry_counter-2}.txt'
+            else :
+                filename = f'docselection/{self.xp_name}_dev{self.queue_entry_counter}.txt'
             print(f'selected examples are written in {filename}')
             if not os.path.exists(os.path.dirname(filename)):
                 os.makedirs(os.path.dirname(filename))
@@ -245,7 +250,7 @@ class AL_Simulator():
                     f.write(f'-------{d["doc_id"]}------\n')
                     f.write(d['text']+'\n')
 
-    def fill_queue(self, sampler, xp_name):
+    def fill_queue(self, sampler):
         print("Selecting following the {self.selection_strategy} strategy.")
         if sampler['predict_before'] :  
             if self.nb_iter <= 1 :
@@ -261,7 +266,7 @@ class AL_Simulator():
             #print(selected_examples)
             self.queue.append([self.pool.pop(e) for e in selected_examples])
             self.queue_entry_counter+=1
-            self.write_docselection(filename=f'docselection/{xp_name}_{self.queue_entry_counter}.txt')
+            self.write_docselection()
                 
     def annotate_one_queue_element(self, to_dev_split=False):
         """Annotate one element from the queue"""
@@ -278,13 +283,13 @@ class AL_Simulator():
         self.dataset.train_data.extend(self.pool.values())
         self.pool = {}
 
-    def go(self, max_steps, xp_name):
+    def go(self, max_steps):
         """Train the model"""
         gc.collect()
         torch.cuda.empty_cache()
         gc.collect()
         
-        iter_name = xp_name + '_' + str(self.nb_iter)
+        iter_name = self.xp_name + '_' + str(self.nb_iter)
         try:
             os.makedirs(os.path.join("checkpoints",os.path.dirname(iter_name)), exist_ok=True)
             trainer = pl.Trainer(
