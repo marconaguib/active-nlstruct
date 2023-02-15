@@ -259,7 +259,7 @@ class AL_Simulator():
                 print('Computing the new model predictions')
                 if self.gpus:
                     self.model.cuda()
-                self.preds = list(self.model.predict(self.pool))
+                self.preds = list(self.model.predict(list(self.pool.values())))
         for _ in range(sampler['visibility']):
             selected_examples = sampler['sample'](self.annotiter_size)
             self.queue.append([self.pool.pop(e) for e in selected_examples])
