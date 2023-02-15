@@ -147,17 +147,25 @@ class AL_Simulator():
             vectorizer = TfidfVectorizer()
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             center = np.mean(X, axis=0)
-            dist = np.sum((X - center)**2, axis=1)
+            dist = [np.linalg.norm(X[i]-center) for i in range(len(self.pool))]
             sorted_idx = np.argsort(dist)
-            return [self.pool[i] for i in sorted_idx[:size]]
+            return sorted_idx[:size]
         def uncertainty_mean_for_most_common_vocab(size):
             vectorizer = TfidfVectorizer()
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             center = np.mean(X, axis=0)
-            dist = np.sum((X - center)**2, axis=1)
-            sorted_idx = np.argsort(dist)
-            #most_common_docs = [self.pool[i] for i in sorted_idx[:size]]
-            return sorted(sorted_idx[:50], key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
+            dist = [np.linalg.norm(X[i]-center) for i in range(len(self.pool))]
+            sorted_idx = np.argsort(dist)[:50]
+            if self.nb_iter <= 1 :
+                print('Too early to count on the model to perform sorting.')
+                return sorted_idx[:size]
+            else :
+                print('Computing the new model predictions')
+                if self.gpus:
+                    self.model.cuda()
+                for i in sorted_idx:
+                    self.preds[i] = self.model.predict(self.pool[i])
+                return sorted(sorted_idx, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
         
         self.samplers = {
             "random": {
@@ -250,7 +258,7 @@ class AL_Simulator():
                     f.write(d['text']+'\n')
 
     def fill_queue(self, sampler):
-        print("Selecting following the {self.selection_strategy} strategy.")
+        print(f"Selecting following the {self.selection_strategy} strategy.")
         if sampler['predict_before'] :  
             if self.nb_iter <= 1 :
                 print('But too early to count on the model to perform this strategy. Selecting randomly.')
