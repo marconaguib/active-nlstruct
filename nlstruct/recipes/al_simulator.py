@@ -141,7 +141,7 @@ class AL_Simulator():
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
             return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
         def sample_diverse_pred(size):
-            X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
+            X = matricize([[e['label'] for e in p['entities']] for p in self.preds])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
             return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
         def sample_most_common_vocab(size):
@@ -163,7 +163,7 @@ class AL_Simulator():
         self.samplers = {
             "random": {
                 'sample' : lambda size:random.sample(self.pool.keys(), size),
-                'visibility' : 10, 'predict_before' : False,
+                'visibility' : self.k + 10, 'predict_before' : False,
             },
             "random1": {
                 'sample' : lambda size:random.sample(self.pool.keys(), size),
@@ -171,19 +171,19 @@ class AL_Simulator():
             },
             "ordered": {
                 'sample' : lambda size:list(self.pool.keys())[:size],
-                'visibility' : 10, 'predict_before' : False,
+                'visibility' : self.k + 10, 'predict_before' : False,
             },
             "length": {
                 'sample' : lambda size:sorted(self.pool.keys(), key=lambda i:len(self.pool[i]['text']), reverse=True)[:size],
-                'visibility' : 10, 'predict_before' : False,
+                'visibility' : self.k + 10, 'predict_before' : False,
             },
             "cluster_vocab": {
                 'sample' : sample_diverse_vocab,
-                'visibility' : 10, 'predict_before' : False,
+                'visibility' : self.k + 10, 'predict_before' : False,
             },
             "dense_vocab": {
                 'sample' : sample_most_common_vocab,
-                'visibility' : 10, 'predict_before' : False,
+                'visibility' : self.k + 10, 'predict_before' : False,
             },
             "cluster_pred": {
                 'sample' : sample_diverse_pred,
@@ -201,12 +201,13 @@ class AL_Simulator():
                 'predict_before' : True,
             },
         #add generic scorers
-        } | {scorer : 
-            {
+        } | {
+            scorer : {
             'sample' : lambda size: sorted(self.pool.keys(), key=pred_scorers[scorer], reverse=True)[:size],
             'visibility' : 1,
             'predict_before' : True,
-            } for scorer in pred_scorers.keys()
+            }
+            for scorer in pred_scorers.keys()
             }
 
 
@@ -215,37 +216,36 @@ class AL_Simulator():
         assert self.selection_strategy in self.samplers.keys(), f"Unknown selection strategy {self.selection_strategy}"
         sampler = self.samplers[self.selection_strategy]
         for _ in range(self.k):
-            self.fill_queue_if_empty(sampler,xp_name)
+            if len(self.queue) == 0:
+                self.fill_queue(sampler,xp_name)
             self.annotate_one_queue_element(to_dev_split=True)
         for _ in range(num_iterations):
             self.tracker.epoch_start()
             self.nb_iter += 1
-            self.fill_queue_if_empty(sampler,xp_name)
+            if len(self.queue) == 0:
+                self.fill_queue(sampler,xp_name)
             self.annotate_one_queue_element()
             self.go(max_steps=max_steps, xp_name=xp_name)
             self.tracker.epoch_end()
         if self.and_train_on_all_data:
             self.tracker.epoch_start()
-            self.nb_iter += len(self.doc_order)//self.annotiter_size
+            self.nb_iter += len(self.pool)//self.annotiter_size
             self.annotate_all_pool()
             self.go(max_steps=max_steps, xp_name=xp_name)
             self.tracker.epoch_end()
     
-    
-    def write_docselection(self, filename, selected_examples):
+    def write_docselection(self, filename):
             """Write the selected examples in a file"""
             print(f'selected examples are written in {filename}')
             if not os.path.exists(os.path.dirname(filename)):
                 os.makedirs(os.path.dirname(filename))
             with open(filename,"w") as f:
                 f.write(f"====== selected docs at annotiter {self.queue_entry_counter} ============\n")
-                for i in selected_examples:
-                    f.write(f'-------{self.pool[i]["doc_id"]}------\n')
-                    f.write(self.pool[i]['text']+'\n')
+                for d in self.queue[-1]:
+                    f.write(f'-------{d["doc_id"]}------\n')
+                    f.write(d['text']+'\n')
 
-    def fill_queue_if_empty(self, sampler, xp_name):
-        if len(self.queue) > 0:
-            return
+    def fill_queue(self, sampler, xp_name):
         print("Selecting following the {self.selection_strategy} strategy.")
         if sampler['predict_before'] :  
             if self.nb_iter <= 1 :
@@ -258,13 +258,10 @@ class AL_Simulator():
                 self.preds = list(self.model.predict(self.pool))
         for _ in range(sampler['visibility']):
             selected_examples = sampler['sample'](self.annotiter_size)
-            print(selected_examples)
-            self.queue.append([self.pool[e] for e in selected_examples])
+            #print(selected_examples)
+            self.queue.append([self.pool.pop(e) for e in selected_examples])
             self.queue_entry_counter+=1
-            self.write_docselection(filename=f'docselection/{xp_name}_{self.queue_entry_counter}.txt',
-                                    selected_examples=selected_examples)
-            for e in selected_examples:
-                del self.pool[e]
+            self.write_docselection(filename=f'docselection/{xp_name}_{self.queue_entry_counter}.txt')
                 
     def annotate_one_queue_element(self, to_dev_split=False):
         """Annotate one element from the queue"""
@@ -274,6 +271,10 @@ class AL_Simulator():
     
     def annotate_all_pool(self):
         """Annotate all the pool"""
+        # empty the queue
+        self.dataset.train_data.extend([e for q in self.queue for e in q])
+        self.queue = []
+        # add all the pool
         self.dataset.train_data.extend(self.pool.values())
         self.pool = {}
 
