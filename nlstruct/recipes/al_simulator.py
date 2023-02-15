@@ -12,13 +12,12 @@ from rich_logger import RichTableLogger
 import pandas as pd
 from nlstruct import BRATDataset, MetricsCollection, get_instance, get_config, InformationExtractor
 from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
-from al_utils import rearrange, matricize
+from al_utils import matricize
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from nlstruct.data_utils import sentencize
 from nlstruct.data_utils import mappable
 import random
-from numpy import log as ln
 from statistics import median as real_median
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -124,10 +123,10 @@ class AL_Simulator():
         mean_3 = lambda l:sum(l)/len(l) if len(l)>3 else 0
         maximum = lambda l:max(l) if len(l) else 0
         minimum = lambda l:min(l) if len(l) else 0
-        median_5 = lambda l:real_median(l) if len(l)>5 else 0
+        median_3 = lambda l:real_median(l) if len(l)>3 else 0
         pred_scorers = {
             "pred_variety": lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
-            "uncertainty_median_min5": lambda i:median_5([1-p['confidence'] for p in self.preds[i]['entities']]),
+            "uncertainty_median_min5": lambda i:median_3([1-p['confidence'] for p in self.preds[i]['entities']]),
             "uncertainty_mean_min3": lambda i:mean_3([1-p['confidence'] for p in self.preds[i]['entities']]),
             "uncertainty_sum": lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
             "uncertainty_min": lambda i:minimum([1-p['confidence'] for p in self.preds[i]['entities']]),
@@ -263,7 +262,6 @@ class AL_Simulator():
                 self.preds = list(self.model.predict(self.pool))
         for _ in range(sampler['visibility']):
             selected_examples = sampler['sample'](self.annotiter_size)
-            #print(selected_examples)
             self.queue.append([self.pool.pop(e) for e in selected_examples])
             self.queue_entry_counter+=1
             self.write_docselection()
