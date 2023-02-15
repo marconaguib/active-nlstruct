@@ -121,171 +121,130 @@ class AL_Simulator():
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
         self.queue_entry_counter = 0
 
-        # mean_3 = lambda l:sum(l)/len(l) if len(l)>3 else 0
-        # maximum = lambda l:max(l) if len(l) else 0
-        # minimum = lambda l:min(l) if len(l) else 0
-        # median = lambda l:real_median(l) if len(l)>5 else 0
-        #unsig = lambda y: ln(y/(1-y) if y!=0 else 1e-8) if y!=1 else 1e3
-        # self.scorers = {
-        # "ordered": {
-        #         'func':lambda i:-i, 
-        #         "predict_before":False,
-        #         'individual':True,
-        #         'frequency':'once',
-        #         },
-        # "random": {
-        #         'func':lambda i:random(),
-        #         "predict_before":False,
-        #         'individual':True,
-        #         'frequency':'once',
-        #     },
-        # "length": {
-        #          'func':lambda i:len(self.pool[i]['text']),
-        #          "predict_before":False,
-        #          "individual":True,
-        #          'frequency':'once',
+        mean_3 = lambda l:sum(l)/len(l) if len(l)>3 else 0
+        maximum = lambda l:max(l) if len(l) else 0
+        minimum = lambda l:min(l) if len(l) else 0
+        median_5 = lambda l:real_median(l) if len(l)>5 else 0
+        
 
-        #          },
-        # "pred_variety": {
-        #          'func':lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
-        #          "predict_before":True,
-        #          "individual":True,
-        #          "frequency":"sometimes",
-        #          },
-        # "uncertainty_median_min5":{
-        #          'func':lambda i:median([1-p['confidence'] for p in self.preds[i]['entities']]),
-        #          "predict_before":True,
-        #          "individual":True,
-        #          "frequency":"sometimes",
-        #          },
-        # "uncertainty_mean_min3":{
-        #          'func':lambda i:mean_3([1-p['confidence'] for p in self.preds[i]['entities']]),
-        #          "predict_before":True,
-        #          "individual":True,
-        #          "frequency":"sometimes",
-        #          },
-        # "uncertainty_sum":{
-        #          'func':lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
-        #          "predict_before":True,
-        #         "individual":True,
-        #         "frequency":"sometimes",
-        #          },
-        # "uncertainty_min":{
-        #         'func':lambda i:minimum([1-p['confidence'] for p in self.preds[i]['entities']]),
-        #         "predict_before":True,
-        #         "individual":True,
-        #         "frequency":"sometimes",
-        #         },
-        # "uncertainty_max":{
-        #         'func':lambda i:maximum([1-p['confidence'] for p in self.preds[i]['entities']]),
-        #         "predict_before":True,
-        #         "individual":True,
-        #         "frequency":"sometimes",   
-        #         },
-        # "pred_num":{
-        #          'func':lambda i:len(self.preds[i]['entities']),
-        #          "predict_before":True,
-        #          "individual":True,
-        #         "frequency":"sometimes",
-        #          },
-        # "cluster_vocab": {
-        #         "predict_before":False,
-        #         "individual":False,
-        #         "frequency":"once",
-        #         },  
-        # "cluster_preds": {
-        #         "predict_before":True,
-        #         "individual":False,
-        #         "frequency":"sometimes",
-        #         },
-        #}
-        self.samplers = {
-            "random": {
-                'sample' : lambda: list(random.sample(self.pool.keys(), self.annotiter_size)),
-                'visibility' : 10,
-            },
-            "ordered": {
-                'sample' : lambda: list(self.pool.keys())[:self.annotiter_size],
-                'visibility' : 10,
-            },
+        def sample_random(size):
+            return list(random.sample(self.pool.keys(), size))
+        def sample_ordered(size):
+            return list(self.pool.keys())[:size]
+        def sample_diverse_vocab(size):
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.pool])
+            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
+            return [random.choice([i for i in self.pool if kmeans.labels_[i]==c]) for c in range(size)]
+        def sample_diverse_pred(size):
+            X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
+            return [random.choice([i for i in self.pool if self.preds[i]['entities'][0]['label']==c]) for c in range(size)]
+        
+        # generic scorers
+        pred_scorers = {
+            "length": lambda i:len(self.pool[i]['text']),
+            "pred_variety": lambda i:len(set([p['label'] for p in self.preds[i]['entities']])),
+            "uncertainty_median_min5": lambda i:median_5([1-p['confidence'] for p in self.preds[i]['entities']]),
+            "uncertainty_mean_min3": lambda i:mean_3([1-p['confidence'] for p in self.preds[i]['entities']]),
+            "uncertainty_sum": lambda i:sum([1-p['confidence'] for p in self.preds[i]['entities']]),
+            "uncertainty_min": lambda i:minimum([1-p['confidence'] for p in self.preds[i]['entities']]),
+            "uncertainty_max": lambda i:maximum([1-p['confidence'] for p in self.preds[i]['entities']]),
+            "pred_num": lambda i:len(self.preds[i]['entities']),
         }
         
+        self.samplers = {
+            "random": {
+                'sample' : sample_random,
+                'visibility' : 10,
+                'predict_before' : False,
+            },
+            "random1": {
+                'sample' : sample_random,
+                'visibility' : 1,
+                'predict_before' : False,
+            },
+            "ordered": {
+                'sample' : sample_ordered,
+                'visibility' : 10,
+                'predict_before' : False,
+            },
+            "cluster_vocab": {
+                'sample' : sample_diverse_vocab,
+                'visibility' : 10,
+                'predict_before' : False,
+            },
+            "cluster_pred": {
+                'sample' : sample_diverse_pred,
+                'visibility' : 1,
+                'predict_before' : True,
+            }
+            | # add the generic scorers
+            {scorer : 
+                {
+                'sample' : lambda size: sorted(self.pool.keys(), key=pred_scorers[scorer], reverse=True)[:size],
+                'visibility' : 1,
+                'predict_before' : True,
+                } for scorer in pred_scorers.keys()
+            }
+
+        }
 
     def run_simulation(self, num_iterations, max_steps, xp_name):
         """Run the simulation for a given number of iterations."""
         assert self.selection_strategy in self.samplers.keys(), f"Unknown selection strategy {self.selection_strategy}"
-        scorer = self.samplers[self.selection_strategy]
+        sampler = self.samplers[self.selection_strategy]
         for _ in range(self.k):
-            self.fill_queue_with_sampler(scorer,xp_name)
+            self.fill_queue_if_empty(sampler,xp_name)
             self.annotate_one_queue_element(to_dev_split=True)
         for _ in range(num_iterations):
+            self.tracker.epoch_start()
             self.nb_iter += 1
-            self.fill_queue_with_sampler(scorer,xp_name)
+            self.fill_queue_if_empty(sampler,xp_name)
             self.annotate_one_queue_element()
-            self.go(max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
+            self.go(max_steps=max_steps, xp_name=xp_name)
             self.tracker.epoch_end()
         if self.and_train_on_all_data:
-            self.nb_iter += len(self.doc_order)//self.annotiter_size
             self.tracker.epoch_start()
+            self.nb_iter += len(self.doc_order)//self.annotiter_size
             self.annotate_all_pool()
-            self.go(max_steps=max_steps, xp_name=xp_name+'_'+str(self.nb_iter))
+            self.go(max_steps=max_steps, xp_name=xp_name)
             self.tracker.epoch_end()
     
     
-    # def select_examples(self, scorer):
-    #     """Select examples to annotate based on a given strategy"""
-    #     print(("Scoring" if scorer['individual'] else "Rearranging") + f" following the {self.selection_strategy} strategy.")
-    #     if scorer['predict_before'] :  
-    #         if self.nb_iter <= 1 :
-    #             print('But too early to count on the model to perform this strategy. Selecting randomly.')
-    #             self.doc_order = sorted(self.doc_order, key=self.scorers['random']['func'], reverse=1)
-    #             return
-    #         else :
-    #             print('Computing the new model predictions')
-    #             if self.gpus:
-    #                 self.model.cuda()
-    #             self.preds = list(self.model.predict(self.pool))
-    #     if 'func' in scorer.keys():
-    #         self.doc_order = sorted(self.doc_order, key=scorer['func'], reverse=1)
-    #     else:
-    #         if self.selection_strategy == 'cluster_vocab':
-    #             vectorizer = TfidfVectorizer()
-    #             X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order])
-    #         elif self.selection_strategy == 'cluster_preds':
-    #             X = matricize([[e['label'] for e in self.preds[i]['entities']] for i in self.doc_order])
-    #         kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-    #         self.doc_order = list(rearrange(self.doc_order, kmeans.labels_))
-    #     print("last clustering")
-    #     vectorizer = TfidfVectorizer()
-    #     X = vectorizer.fit_transform([self.pool[i]['text'] for i in self.doc_order[:100]])
-    #     kmeans = KMeans(n_clusters=self.annotiter_size, random_state=self.al_seed).fit(X)
-    #     self.doc_order = list(rearrange(self.doc_order[:100], kmeans.labels_)) + self.doc_order[100:]            
-
     def write_docselection(self, filename, selected_examples):
             """Write the selected examples in a file"""
             print(f'selected examples are written in {filename}')
             if not os.path.exists(os.path.dirname(filename)):
                 os.makedirs(os.path.dirname(filename))
             with open(filename,"w") as f:
-                f.write(f"====== selected docs at annotiter {self.queue_entry_counter+self.nb_iter} ============\n")
+                f.write(f"====== selected docs at annotiter {self.queue_entry_counter} ============\n")
                 for i in selected_examples:
                     f.write(f'-------{self.pool[i]["doc_id"]}------\n')
                     f.write(self.pool[i]['text']+'\n')
 
-    def fill_queue_with_sampler(self, sampler, xp_name):
+    def fill_queue_if_empty(self, sampler, xp_name):
         if len(self.queue) > 0:
             return
-        for i in range(sampler['visibility']):
-            selected_examples = sampler['sample']()
+        print("Selecting following the {self.selection_strategy} strategy.")
+        if sampler['predict_before'] :  
+            if self.nb_iter <= 1 :
+                print('But too early to count on the model to perform this strategy. Selecting randomly.')
+                sampler = self.samplers['random1']
+            else :
+                print('Computing the new model predictions')
+                if self.gpus:
+                    self.model.cuda()
+                self.preds = list(self.model.predict(self.pool))
+        for _ in range(sampler['visibility']):
+            selected_examples = sampler['sample'](self.annotiter_size)
+            print(selected_examples)
             self.queue.append([self.pool[e] for e in selected_examples])
             self.queue_entry_counter+=1
-            print(selected_examples)
-            self.write_docselection(filename=f'docselection/{xp_name}_{self.queue_entry_counter+self.nb_iter}.txt',
+            self.write_docselection(filename=f'docselection/{xp_name}_{self.queue_entry_counter}.txt',
                                     selected_examples=selected_examples)
-            for i in selected_examples:
-                del self.pool[i]
+            for e in selected_examples:
+                del self.pool[e]
                 
-   
     def annotate_one_queue_element(self, to_dev_split=False):
         """Annotate one element from the queue"""
         print("annotating one element from the queue")
@@ -303,16 +262,17 @@ class AL_Simulator():
         torch.cuda.empty_cache()
         gc.collect()
         
+        iter_name = xp_name + '_' + str(self.nb_iter)
         try:
-            os.makedirs(os.path.join("checkpoints",os.path.dirname(xp_name)), exist_ok=True)
+            os.makedirs(os.path.join("checkpoints",os.path.dirname(iter_name)), exist_ok=True)
             trainer = pl.Trainer(
                 gpus=self.gpus,
                 #fast_dev_run=1,
                 progress_bar_refresh_rate=1,
                 checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
                 callbacks=[
-                           #ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{hashkey}-{global_step:05d}'),
-                           ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not xp_name else 'checkpoints/' + xp_name + '-{global_step:05d}'),
+                           #ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{hashkey}-{global_step:05d}'),
+                           ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{global_step:05d}'),
                            EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                            ],
                 logger=[
@@ -325,7 +285,7 @@ class AL_Simulator():
                         ".*_lr|max_grad": {"format": "{:.2e}"},
                         "duration": {"format": "{:.0f}", "name": "dur(s)"},
                     }),
-                    pl.loggers.TestTubeLogger("logs", name=xp_name if xp_name is not None else "untitled_experience"),
+                    pl.loggers.TestTubeLogger("logs", name=iter_name if iter_name is not None else "untitled_experience"),
                 ],
                 val_check_interval=max_steps//10,
                 max_steps=max_steps
@@ -333,7 +293,7 @@ class AL_Simulator():
             trainer.fit(self.model, self.dataset)
             trainer.logger[0].finalize(True)
         
-            result_output_filename = "checkpoints/{}.json".format(xp_name)
+            result_output_filename = "checkpoints/{}.json".format(iter_name)
             if self.dataset.test_data:
                 print("TEST RESULTS:")
             else:
