@@ -22,9 +22,9 @@ import random
 from statistics import median as real_median
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-import nltk
-nltk.download('stopwords')
-from nltk.corpus import stopwords
+# import nltk
+# nltk.download('stopwords')
+# from nltk.corpus import stopwords
 
 
 shared_cache = {}
@@ -153,7 +153,7 @@ class AL_Simulator():
             return closest
         def sample_most_common_vocab(size):
             # get the most common n-grams avoiding french stopwords
-            vectorizer = CountVectorizer(ngram_range=(1, 3), stop_words=stopwords.words('french'))
+            vectorizer = CountVectorizer(ngram_range=(1, 3),)
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             counts = np.asarray(X.sum(axis=0)).ravel()
             most_common_ngrams = np.argsort(counts)[::-1][:100]
@@ -172,6 +172,7 @@ class AL_Simulator():
                 print('Computing the new model predictions')
                 if self.gpus:
                     self.model.cuda()
+                #TODO: make sure this doesn't break preds order
                 for i in most_common:
                     self.preds[i] = self.model.predict(self.pool[i])
                 return sorted(most_common, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
