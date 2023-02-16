@@ -217,7 +217,9 @@ class AL_Simulator():
                 'predict_before' : True,
             },
             "dense_uncertainty+cluster_pred": {
-                'sample' : lambda size:uncertainty_mean_for_most_common_vocab(size//2) + sample_diverse_pred(size//2),
+                'sample' : lambda size:np.concatenate((
+                        uncertainty_mean_for_most_common_vocab(size//2 + (1 if size%2 else 0)),
+                        sample_diverse_pred(size//2))),
                 'visibility' : 1,
                 'predict_before' : True,
             },
