@@ -153,23 +153,16 @@ class AL_Simulator():
             vectorizer = CountVectorizer(ngram_range=(1, 3))
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             counts = np.asarray(X.sum(axis=0)).ravel()
-            most_common = np.argsort(counts)[::-1][:100]
+            most_common_ngrams = np.argsort(counts)[::-1][:100]
+            print([vectorizer.get_feature_names_out()[i] for i in most_common_ngrams])
             # for each document, get the number of n-grams that are in the most common n-grams
-            X = X[:,most_common]
+            X = X[:,most_common_ngrams]
             counts = np.asarray(X.sum(axis=1)).ravel()
             most_common = np.argsort(counts)[::-1][:size]
             return most_common
             
         def uncertainty_mean_for_most_common_vocab(size):
-            # get the most common n-grams
-            vectorizer = CountVectorizer(ngram_range=(1, 3))
-            X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            counts = np.asarray(X.sum(axis=0)).ravel()
-            most_common = np.argsort(counts)[::-1][:100]
-            # for each document, get the number of n-grams that are in the most common n-grams
-            X = X[:,most_common]
-            counts = np.asarray(X.sum(axis=1)).ravel()
-            most_common = np.argsort(counts)[::-1][:50]
+            most_common = sample_most_common_vocab(50)
             if self.nb_iter <= 1 :
                 print('Too early to count on the model to perform sorting.')
                 return most_common[:size]
