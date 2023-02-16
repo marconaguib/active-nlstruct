@@ -23,7 +23,7 @@ dataset['word_count'] = dataset.groupby(['corpus','type_f1','xp_name','seed'])['
 
 
 def plot_iterations(data,**kwargs):
-    sns.lineplot(data=data.query('batch<=10'), **kwargs)
+    sns.lineplot(data=data.query('batch<=20'), **kwargs)
 
 def plot_all(data, **kwargs):
     value_to_mean = kwargs.pop('value','score')

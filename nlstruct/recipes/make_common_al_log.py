@@ -33,7 +33,7 @@ with open(args.output, 'w') as log_file:
                         f1_micro = test_dico["results"]['exact']['f1']
                         other_scores = [v for k,v in test_dico['results']['exact'].items() if k.endswith('_f1')]
                         f1_macro = np.mean(other_scores) if len(other_scores) else f1_micro
-                        if int(batchname) <= 10:
+                        if int(batchname) <= 20:
                             with open(fn_docselection,'r') as f:
                                 s = f.read()
                             #remove lines beginning with "====" or "---"
