@@ -21,7 +21,7 @@ with open(args.output, 'w') as log_file:
     log_file.write('corpus;batch;score;type_f1;xp_name;word_count;seed\n')
     for corpus in args.corpus_name_or_names :
         for xp_name_prefix in args.strategies:
-            for xp_name_full in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name_prefix+'*_1.json')):
+            for xp_name_full in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name_prefix+'seed*_1.json')):
                 xp_name = os.path.basename(xp_name_full.replace('_1.json',''))
 
                 for fn in glob.glob(os.path.join(f'{args.prefix}/checkpoints/{corpus}', xp_name+'_*json')):
