@@ -191,26 +191,34 @@ class AL_Simulator():
                 'sample' : lambda size:sorted(range(len(self.pool)), key=lambda i:len(self.pool[i]['text']), reverse=True)[:size],
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
-            "cluster_vocab": {
+            "diverse_vocab": {
                 'sample' : sample_diverse_vocab,
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
-            "dense_vocab": {
+            "common_vocab": {
                 'sample' : sample_most_common_vocab,
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
-            "cluster_pred": {
+            "diverse_pred": {
                 'sample' : sample_diverse_pred,
                 'visibility' : 1,
                 'predict_before' : True,
             },
-            "dense_uncertainty": {
+            "common_vocab+diverse_pred": {
+                'sample' : lambda size:np.concatenate((
+                        sample_most_common_vocab(size//2 + (1 if size%2 else 0)),
+                        sample_diverse_pred(size//2))),
+                'visibility' : 1,
+                'predict_before' : True,
+            },
+            "common_vocab_uncertain": {
                 'sample' : uncertainty_mean_for_most_common_vocab,
                 'visibility' : 1,
                 'predict_before' : True,
             },
-            "dense_uncertainty+cluster_pred": {
+            "common_vocab_uncertain+diverse_pred": {
                 'sample' : lambda size:np.concatenate((
+                        #TODO: make sure the intersection is empty
                         uncertainty_mean_for_most_common_vocab(size//2 + (1 if size%2 else 0)),
                         sample_diverse_pred(size//2))),
                 'visibility' : 1,
