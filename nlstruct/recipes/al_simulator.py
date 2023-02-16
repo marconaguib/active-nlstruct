@@ -21,7 +21,7 @@ from nlstruct.data_utils import mappable
 import random
 from statistics import median as real_median
 from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 
 
 shared_cache = {}
@@ -149,29 +149,37 @@ class AL_Simulator():
             closest, _ = pairwise_distances_argmin_min(centers, X)
             return closest
         def sample_most_common_vocab(size):
-            vectorizer = TfidfVectorizer()
+            # get the most common n-grams
+            vectorizer = CountVectorizer(ngram_range=(1, 3))
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            centers = kmeans.cluster_centers_
-            most_common_center = np.argmax([sum(kmeans.labels_==c) for c in range(size)])
-            closest = pairwise_distances(centers[most_common_center].reshape(1,-1), X).argsort()[0][:size]
-            return closest
+            counts = np.asarray(X.sum(axis=0)).ravel()
+            most_common = np.argsort(counts)[::-1][:100]
+            # for each document, get the number of n-grams that are in the most common n-grams
+            X = X[:,most_common]
+            counts = np.asarray(X.sum(axis=1)).ravel()
+            most_common = np.argsort(counts)[::-1][:size]
+            return most_common
+            
         def uncertainty_mean_for_most_common_vocab(size):
-            vectorizer = TfidfVectorizer()
+            # get the most common n-grams
+            vectorizer = CountVectorizer(ngram_range=(1, 3))
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            center = np.mean(X, axis=0)
-            dist = [np.linalg.norm(X[i]-center) for i in range(len(self.pool))]
-            sorted_idx = np.argsort(dist)[:50]
+            counts = np.asarray(X.sum(axis=0)).ravel()
+            most_common = np.argsort(counts)[::-1][:100]
+            # for each document, get the number of n-grams that are in the most common n-grams
+            X = X[:,most_common]
+            counts = np.asarray(X.sum(axis=1)).ravel()
+            most_common = np.argsort(counts)[::-1][:50]
             if self.nb_iter <= 1 :
                 print('Too early to count on the model to perform sorting.')
-                return sorted_idx[:size]
+                return most_common[:size]
             else :
                 print('Computing the new model predictions')
                 if self.gpus:
                     self.model.cuda()
-                for i in sorted_idx:
+                for i in most_common:
                     self.preds[i] = self.model.predict(self.pool[i])
-                return sorted(sorted_idx, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
+                return sorted(most_common, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
         
         self.samplers = {
             "random": {
