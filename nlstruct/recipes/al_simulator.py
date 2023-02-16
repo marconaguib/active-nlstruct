@@ -22,6 +22,9 @@ import random
 from statistics import median as real_median
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+import nltk
+nltk.download('stopwords')
+from nltk.corpus import stopwords
 
 
 shared_cache = {}
@@ -149,12 +152,11 @@ class AL_Simulator():
             closest, _ = pairwise_distances_argmin_min(centers, X)
             return closest
         def sample_most_common_vocab(size):
-            # get the most common n-grams
-            vectorizer = CountVectorizer(ngram_range=(1, 3))
+            # get the most common n-grams avoiding french stopwords
+            vectorizer = CountVectorizer(ngram_range=(1, 3), stop_words=stopwords.words('french'))
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             counts = np.asarray(X.sum(axis=0)).ravel()
             most_common_ngrams = np.argsort(counts)[::-1][:100]
-            print([vectorizer.get_feature_names_out()[i] for i in most_common_ngrams])
             # for each document, get the number of n-grams that are in the most common n-grams
             X = X[:,most_common_ngrams]
             counts = np.asarray(X.sum(axis=1)).ravel()
