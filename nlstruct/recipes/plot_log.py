@@ -38,18 +38,14 @@ g.add_legend(title='Selection strategy',)
 g.set_titles(row_template='{row_name}', col_template='{col_name}')
 
 ax = plt.gca()
-# remove the facetgrid legend
-g.legend.remove()
 ax.yaxis.set_major_locator(ticker.MultipleLocator(0.05))
 for ax in g.axes.flat:
     ax.set_ylim(0,1)
     if args.word_count:
-        ax.set_xlim(0,1250)
+        #ax.set_xlim(0,1250)
+        pass
     ax.set_xlabel('Iterations' if not args.word_count else 'Word count')
     ax.set_ylabel('F1 score')
     
-g.axes.flat[len(g.col_names)-1].legend(loc='lower right')
-
-plt.tight_layout()
 plt.show()
 
