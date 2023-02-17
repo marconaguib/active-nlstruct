@@ -227,6 +227,11 @@ class AL_Simulator():
                 'visibility' : 1,
                 'predict_before' : True,
             },
+            "common_vocab_then_uncertain": {
+                'sample' : uncertainty_mean_for_most_common_vocab if self.nb_iter <3 else lambda size : sorted(range(len(self.pool)), key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size],
+                'visibility' : 1,
+                'predict_before' : True,
+            },
         #add generic scorers
         } | {
             scorer : {
