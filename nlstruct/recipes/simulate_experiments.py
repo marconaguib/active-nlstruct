@@ -25,8 +25,6 @@ for corpus in args.corpus_name_or_names:
                     entities_to_ignore = args.entities_to_ignore,
                     finetune_bert=True,
                     bert_name=args.bert_name,
-                    sentencize_pool=False,
-                    annotiter_size=2,
                     )
             ignore_suffix = f"_no{''.join(args.entities_to_ignore).lower()}" if len(args.entities_to_ignore) else ''
             xp_name = f"{corpus}{ignore_suffix}/{strategy}seed{randseed}"
