@@ -100,11 +100,13 @@ class AL_Simulator():
             print("Specifying the validation dataset size is useless, it's determined by k in AL_Simulator.")
 
         all_docs = self.dataset.val_data + self.dataset.train_data
-        self.pool = []
         if sentencize_pool:
+            self.pool = []
             for d in all_docs:
                 sentences = sentencize(d, reg_split=r"(?<=[.|\s])(?:\s+)(?=[A-Z])", entity_overlap="split")
                 self.pool.extend([s for s in sentences if len(s['text'])>1])
+        else:
+            self.pool = all_docs
         
         if len(entities_to_ignore):
             for s in self.pool:
