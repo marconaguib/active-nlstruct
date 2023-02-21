@@ -54,7 +54,7 @@ class AL_Simulator():
         self.unique_label = unique_label
         self.dataset_name = dataset_name
         self.and_train_on_all_data = and_train_on_all_data
-        self.preds = None
+        self.preds = {}
         random.seed(al_seed)
         self.al_seed = al_seed
         self.args = args
@@ -105,6 +105,8 @@ class AL_Simulator():
             for d in all_docs:
                 sentences = sentencize(d, reg_split=r"(?<=[.|\s])(?:\s+)(?=[A-Z])", entity_overlap="split")
                 self.pool.extend([s for s in sentences if len(s['text'])>1])
+        else:
+            self.pool = all_docs
         
         if len(entities_to_ignore):
             for s in self.pool:
@@ -113,6 +115,9 @@ class AL_Simulator():
             self.pool = [s for s in self.pool 
                      if not [e['label'] for e in s['entities']] in [[t] for t in entities_to_remove_from_pool]
                    ]
+            
+        self.too_similar = []
+
         self.dataset.val_data = []
         self.dataset.train_data = []
         self.queue = []
@@ -139,12 +144,32 @@ class AL_Simulator():
         }
         
         def sample_diverse_vocab(size):
-            vectorizer = TfidfVectorizer()
-            X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-            centers = kmeans.cluster_centers_
-            closest, _ = pairwise_distances_argmin_min(centers, X)
-            return closest
+            vectorizer = TfidfVectorizer(ngram_range=(1, 2),)
+            #exclude docs that are too similar to the ones already in the queue
+            X = vectorizer.fit_transform([d['text'] for i,d in enumerate(self.pool) if i not in self.too_similar])
+            
+            kmeans = KMeans(n_clusters=2*size, random_state=self.al_seed).fit(X)
+            labels = random.sample(list(set(kmeans.labels_)), size)
+            # return one document per cluster
+            # and make sure that the document is not too short
+            #res = [random.choice([i for i,l in enumerate(kmeans.labels_) if l==label and len(self.pool[i]['text'])>5]) for label in labels]
+            res = []
+            while len(res)<size:
+                label = labels[len(res)]
+                relevant_docs_in_cluster = [i for i,l in enumerate(kmeans.labels_) if l==label and len(self.pool[i]['text'])>5]
+                if len(relevant_docs_in_cluster):
+                    res.append(random.choice(relevant_docs_in_cluster))
+            for i in res:
+                #compute k as 0.5 percent of the pool size
+                k = int(0.005*len(self.pool))
+                dists = pairwise_distances(X[i], X, metric='cosine').ravel()
+                nearest = np.argsort(dists)[:k]
+                for n in nearest:
+                    self.too_similar.append(n)
+
+            return res
+
+        
         def sample_diverse_pred(size):
             X = matricize([[e['label'] for e in p['entities']] for p in self.preds])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
@@ -153,7 +178,7 @@ class AL_Simulator():
             return closest
         def sample_most_common_vocab(size):
             # get the most common n-grams avoiding french stopwords
-            vectorizer = CountVectorizer(ngram_range=(1, 3),)
+            vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             counts = np.asarray(X.sum(axis=0)).ravel()
             most_common_ngrams = np.argsort(counts)[::-1][:100]
@@ -163,6 +188,21 @@ class AL_Simulator():
             most_common = np.argsort(counts)[::-1][:size]
             return most_common
             
+        def uncertainty_mean_for_most_diverse_vocab(size):
+            if self.nb_iter <= 1 :
+                most_diverse = sample_diverse_vocab(size)
+                print('Too early to count on the model to perform sorting.')
+                return most_diverse[:size]
+            else :
+                most_diverse = sample_diverse_vocab(20)
+                print('Computing the new model predictions')
+                if self.gpus:
+                    self.model.cuda()
+                #TODO: make sure this doesn't break preds order
+                self.preds={}
+                for i in most_diverse:
+                    self.preds[i] = self.model.predict(self.pool[i])
+                return sorted(most_diverse, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
         def uncertainty_mean_for_most_common_vocab(size):
             most_common = sample_most_common_vocab(50)
             if self.nb_iter <= 1 :
@@ -173,9 +213,11 @@ class AL_Simulator():
                 if self.gpus:
                     self.model.cuda()
                 #TODO: make sure this doesn't break preds order
+                self.preds={}
                 for i in most_common:
                     self.preds[i] = self.model.predict(self.pool[i])
                 return sorted(most_common, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
+        
         
         self.samplers = {
             "random": {
@@ -214,8 +256,21 @@ class AL_Simulator():
                 'visibility' : 1,
                 'predict_before' : True,
             },
+            "diverse_vocab_uncertain": {
+                'sample' : uncertainty_mean_for_most_diverse_vocab,
+                'visibility' : 1,
+                'predict_before' : False,
+            },
             "common_vocab_uncertain": {
                 'sample' : uncertainty_mean_for_most_common_vocab,
+                'visibility' : 1,
+                'predict_before' : True,
+            },
+            "diverse_vocab_uncertain+diverse_pred": {
+                'sample' : lambda size:np.concatenate((
+                        #TODO: make sure the intersection is empty
+                        uncertainty_mean_for_most_diverse_vocab(size//2 + (1 if size%2 else 0)),
+                        sample_diverse_pred(size//2))),
                 'visibility' : 1,
                 'predict_before' : True,
             },
@@ -290,9 +345,10 @@ class AL_Simulator():
                 sampler = self.samplers['random1']
             else :
                 print('Computing the new model predictions')
+                self.preds={}
                 if self.gpus:
                     self.model.cuda()
-                self.preds = list(self.model.predict(list(self.pool)))
+                self.preds = {i:p for i,p in enumerate(self.model.predict(list(self.pool)))}
         for _ in range(sampler['visibility']):
             selected_examples = sampler['sample'](self.annotiter_size)
             res =[]
@@ -334,7 +390,7 @@ class AL_Simulator():
                 callbacks=[
                            #ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{hashkey}-{global_step:05d}'),
                            ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{global_step:05d}'),
-                           EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
+                           #EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
                            ],
                 logger=[
                     RichTableLogger(key="epoch", fields={

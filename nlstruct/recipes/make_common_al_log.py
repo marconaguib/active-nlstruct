@@ -33,6 +33,7 @@ with open(args.output, 'w') as log_file:
                         f1_micro = test_dico["results"]['exact']['f1']
                         other_scores = [v for k,v in test_dico['results']['exact'].items() if k.endswith('_f1')]
                         f1_macro = np.mean(other_scores) if len(other_scores) else f1_micro
+                        f1_min = np.min(other_scores) if len(other_scores) else f1_micro
                         if int(batchname) <= 20:
                             with open(fn_docselection,'r') as f:
                                 s = f.read()
@@ -45,4 +46,5 @@ with open(args.output, 'w') as log_file:
                             word_count = -1
                         log_file.write(f'{corpus};{batchname};{f1_micro};micro;{xp_name_prefix};{word_count};{seed}\n')
                         log_file.write(f'{corpus};{batchname};{f1_macro};macro;{xp_name_prefix};{word_count};{seed}\n')
+                        log_file.write(f'{corpus};{batchname};{f1_min};min;{xp_name_prefix};{word_count};{seed}\n')
     
