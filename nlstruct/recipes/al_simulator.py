@@ -273,22 +273,19 @@ class AL_Simulator():
             }
             for scorer in pred_scorers.keys()
             }
-
-
+        
     def run_simulation(self, num_iterations, max_steps, xp_name):
         """Run the simulation for a given number of iterations."""
-        assert self.selection_strategy in self.samplers.keys(), f"Unknown selection strategy {self.selection_strategy}"
-        sampler = self.samplers[self.selection_strategy]
         self.xp_name = xp_name
         for _ in range(self.k):
             if len(self.queue) == 0:
-                self.fill_queue(sampler)
+                self.fill_queue()
             self.annotate_one_queue_element(to_dev_split=True)
         for _ in range(num_iterations):
             self.tracker.epoch_start()
             self.nb_iter += 1
             if len(self.queue) == 0:
-                self.fill_queue(sampler)
+                self.fill_queue()
             self.annotate_one_queue_element()
             self.go(max_steps=max_steps)
             self.tracker.epoch_end()
