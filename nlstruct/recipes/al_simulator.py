@@ -183,13 +183,11 @@ class AL_Simulator():
             # get the most common n-grams avoiding french stopwords
             vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            counts = np.asarray(X.sum(axis=0)).ravel()
-            most_common_ngrams = np.argsort(counts)[::-1][:100]
-            # for each document, get the number of n-grams that are in the most common n-grams
-            X = X[:,most_common_ngrams]
-            counts = np.asarray(X.sum(axis=1)).ravel()
-            most_common = np.argsort(counts)[::-1][:size]
-            return most_common
+            dists = pairwise_distances(X, metric='cosine')
+            dists_sums = np.sum(dists, axis=1)
+            #get the indices of the docs with the lowest sum of distances excluding the ones too short
+            closest = np.argsort([d for i,d in enumerate(dists_sums) if len(self.pool[i]['text'])>50])[:size]
+            return closest
             
         def uncertainty_mean_for_most_diverse_vocab(size):
             if self.nb_iter <= 1 :
