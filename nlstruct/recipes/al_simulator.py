@@ -192,14 +192,13 @@ class AL_Simulator():
         def uncertainty_mean_for_most_diverse_vocab(size):
             if self.nb_iter <= 1 :
                 most_diverse = sample_diverse_vocab(size)
-                print('Too early to count on the model to perform sorting.')
+                #print('Too early to count on the model to perform uncertainty sorting for most diverse vocab. Returning most diverse vocab.')
                 return most_diverse[:size]
             else :
-                most_diverse = sample_diverse_vocab(20)
-                print('Computing the new model predictions')
+                most_diverse = sample_diverse_vocab(2*size)
+                print('Computing model predictions for most diverse vocab')
                 if self.gpus:
                     self.model.cuda()
-                #TODO: make sure this doesn't break preds order
                 self.preds={}
                 for i in most_diverse:
                     self.preds[i] = self.model.predict(self.pool[i])
@@ -208,10 +207,10 @@ class AL_Simulator():
         def uncertainty_mean_for_most_common_vocab(size):
             most_common = sample_most_common_vocab(50)
             if self.nb_iter <= 1 :
-                print('Too early to count on the model to perform sorting.')
+                #print('Too early to count on the model to perform sorting.')
                 return most_common[:size]
             else :
-                print('Computing the new model predictions')
+                print('Computing model predictions for most common vocab')
                 if self.gpus:
                     self.model.cuda()
                 #TODO: make sure this doesn't break preds order
@@ -250,13 +249,6 @@ class AL_Simulator():
                 'visibility' : 1,
                 'predict_before' : True,
             },
-            "common_vocab+diverse_pred": {
-                'sample' : lambda size:np.concatenate((
-                        sample_most_common_vocab(size//2 + (1 if size%2 else 0)),
-                        sample_diverse_pred(size//2))),
-                'visibility' : 1,
-                'predict_before' : True,
-            },
             "diverse_vocab_uncertain": {
                 'sample' : uncertainty_mean_for_most_diverse_vocab,
                 'visibility' : 1,
@@ -267,27 +259,11 @@ class AL_Simulator():
                 'visibility' : 1,
                 'predict_before' : True,
             },
-            "diverse_vocab_uncertain+diverse_pred": {
-                'sample' : lambda size:np.concatenate((
-                        #TODO: make sure the intersection is empty
-                        uncertainty_mean_for_most_diverse_vocab(size//2 + (1 if size%2 else 0)),
-                        sample_diverse_pred(size//2))),
-                'visibility' : 1,
-                'predict_before' : True,
-            },
-            "common_vocab_uncertain+diverse_pred": {
-                'sample' : lambda size:np.concatenate((
-                        #TODO: make sure the intersection is empty
-                        uncertainty_mean_for_most_common_vocab(size//2 + (1 if size%2 else 0)),
-                        sample_diverse_pred(size//2))),
-                'visibility' : 1,
-                'predict_before' : True,
-            },
-            "common_vocab_then_uncertain": {
-                'sample' : uncertainty_mean_for_most_common_vocab if self.nb_iter <3 else lambda size : sorted(range(len(self.pool)), key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size],
-                'visibility' : 1,
-                'predict_before' : True,
-            },
+            # "common_vocab_then_uncertain": {
+            #     'sample' : uncertainty_mean_for_most_common_vocab if self.nb_iter <3 else lambda size : sorted(range(len(self.pool)), key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size],
+            #     'visibility' : 1,
+            #     'predict_before' : True,
+            # },
         #add generic scorers
         } | {
             scorer : {
@@ -338,20 +314,35 @@ class AL_Simulator():
                     f.write(f'-------{d["doc_id"]}------\n')
                     f.write(d['text']+'\n')
 
-    def fill_queue(self, sampler):
-        print(f"Selecting following the {self.selection_strategy} strategy.")
-        if sampler['predict_before'] :  
-            if self.nb_iter <= 1 :
-                print('But too early to count on the model to perform this strategy. Selecting randomly.')
+    def fill_queue(self):
+        strategies = self.selection_strategy.split('+')
+        #array of a repartition of the number of examples to select into the number of strategies
+        #e.g. if we want to select 10 examples and we have 3 strategies, we will select 4, 3 and 3 examples
+        repartition = np.array([self.annotiter_size//len(strategies) for _ in range(len(strategies))])
+        repartition[:self.annotiter_size%len(strategies)]+=1
+        samplers = [self.samplers[s] for s in strategies]
+        if any([s['predict_before'] for s in samplers]) and self.nb_iter > 1:
+            print('Computing the new model predictions')
+            self.preds={}
+            if self.gpus:
+                self.model.cuda()
+            self.preds = {i:p for i,p in enumerate(self.model.predict(list(self.pool)))}
+        for _ in range(min([s['visibility'] for s in samplers])):
+            selected_examples = []
+            for idx, (sampler, size) in enumerate(zip(samplers, repartition)):
+                if self.nb_iter <= 1 and sampler['predict_before']:
+                    print(f'Selecting {size} examples randomly (instead of {strategies[idx]}), because model not trained yet')
+                    #print(f'Too early to count on the model to perform the {[s for s in strategies if self.samplers[s]["predict_before"]]} strategies. Selecting randomly')
+                    sampler = self.samplers['random1']
+                    selected_examples.extend(sampler['sample'](size))
+                else:
+                    print(f"Selecting {size} examples with the {strategies[idx]} strategy")
+                    selected_examples.extend(sampler['sample'](size))
+            selected_examples = list(set(selected_examples))
+            if len(selected_examples) < self.annotiter_size:
+                print('found duplicates, adding random examples')
                 sampler = self.samplers['random1']
-            else :
-                print('Computing the new model predictions')
-                self.preds={}
-                if self.gpus:
-                    self.model.cuda()
-                self.preds = {i:p for i,p in enumerate(self.model.predict(list(self.pool)))}
-        for _ in range(sampler['visibility']):
-            selected_examples = sampler['sample'](self.annotiter_size)
+                selected_examples.extend(sampler['sample'](self.annotiter_size-len(selected_examples)))
             res =[]
             for e in sorted(selected_examples, reverse=True):
                 res.append(self.pool.pop(e))
