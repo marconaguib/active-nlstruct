@@ -35,7 +35,7 @@ class DummyIterableDataset(torch.utils.data.IterableDataset):
             self.data.load_state_dict(state)
 
     def __iter__(self):
-        for _ in (range(self.epoch_length) if self.epoch_length is not None else repeat(None)):
+        for _ in (range(int(self.epoch_length)) if self.epoch_length is not None else repeat(None)):
             yield next(self.data)
         yield None
 

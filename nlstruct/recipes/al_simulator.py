@@ -45,6 +45,7 @@ class AL_Simulator():
          BASE_SENTENCE_REGEX = r"((?:\s*\n)+\s*|(?:(?<=[\w0-9]{2,}\.|[)]\.)\s+))(?=[[:upper:]]|•|\n)",
          entities_to_ignore = [],
          entities_to_remove_from_pool = [],
+         debug = False,
          *args,
          **kwargs,
     ):
@@ -54,6 +55,7 @@ class AL_Simulator():
         self.unique_label = unique_label
         self.dataset_name = dataset_name
         self.and_train_on_all_data = and_train_on_all_data
+        self.debug = debug
         self.preds = {}
         random.seed(al_seed)
         self.al_seed = al_seed
@@ -107,6 +109,10 @@ class AL_Simulator():
                 self.pool.extend([s for s in sentences if len(s['text'])>1])
         else:
             self.pool = all_docs
+
+        if self.debug:
+            self.pool = self.pool[:100]
+            self.dataset.test_data = self.dataset.test_data[:10]
         
         if len(entities_to_ignore):
             for s in self.pool:
@@ -124,7 +130,7 @@ class AL_Simulator():
         #pool needs to be a dict to be able to remove elements properly
         #self.pool = {i:s for i,s in enumerate(self.pool)}
         self.nb_iter = 0
-        self.gpus = gpus
+        self.gpus = gpus if not debug else 0
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
         self.queue_entry_counter = 0
 
@@ -164,7 +170,6 @@ class AL_Simulator():
                 nearest = np.argsort(dists)[:k]
                 for n in nearest:
                     self.too_similar.append(n)
-
             return res
         
         def sample_diverse_pred(size):
@@ -382,14 +387,13 @@ class AL_Simulator():
             os.makedirs(os.path.join("checkpoints",os.path.dirname(iter_name)), exist_ok=True)
             trainer = pl.Trainer(
                 gpus=self.gpus,
-                #fast_dev_run=1,
+                fast_dev_run=self.debug,
                 progress_bar_refresh_rate=1,
                 checkpoint_callback=False,  # do not make checkpoints since it slows down the training a lot
-                callbacks=[
+                callbacks=[ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{global_step:05d}')]
+                            if not self.debug else None,
                            #ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{hashkey}-{global_step:05d}'),
-                           ModelCheckpoint(path='checkpoints/{hashkey}-{global_step:05d}' if not iter_name else 'checkpoints/' + iter_name + '-{global_step:05d}'),
                            #EarlyStopping(monitor="val_exact_f1",mode="max", patience=3),
-                           ],
                 logger=[
                     RichTableLogger(key="epoch", fields={
                         "epoch": {},"step": {},

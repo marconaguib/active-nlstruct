@@ -12,6 +12,7 @@ parser.add_argument('-r','--random_seeds', type=int, nargs='+', help='random see
 parser.add_argument('-s','--strategies', type=str, nargs='+', help='strategies to apply',default=[])
 parser.add_argument('-b','--bert_name', type=str, help='bert name',default="camembert-base")
 parser.add_argument('-i','--entities_to_ignore', type=str, nargs='+', help='', default=[])
+parser.add_argument('-d','--debug', action='store_true', help='debug mode', default=False)
 args = parser.parse_args()
 assert all([os.path.exists(name) for name in args.corpus_name_or_names])
 for corpus in args.corpus_name_or_names:
@@ -25,6 +26,7 @@ for corpus in args.corpus_name_or_names:
                     entities_to_ignore = args.entities_to_ignore,
                     finetune_bert=True,
                     bert_name=args.bert_name,
+                    debug=args.debug,
                     )
             ignore_suffix = f"_no{''.join(args.entities_to_ignore).lower()}" if len(args.entities_to_ignore) else ''
             xp_name = f"{corpus}{ignore_suffix}/{strategy}seed{randseed}"
