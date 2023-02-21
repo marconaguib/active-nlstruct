@@ -150,8 +150,6 @@ class AL_Simulator():
             
             kmeans = KMeans(n_clusters=2*size, random_state=self.al_seed).fit(X)
             labels = random.sample(list(set(kmeans.labels_)), size)
-            # return one document per cluster
-            # and make sure that the document is not too short
             #res = [random.choice([i for i,l in enumerate(kmeans.labels_) if l==label and len(self.pool[i]['text'])>5]) for label in labels]
             res = []
             while len(res)<size:
@@ -168,14 +166,14 @@ class AL_Simulator():
                     self.too_similar.append(n)
 
             return res
-
         
         def sample_diverse_pred(size):
-            X = matricize([[e['label'] for e in p['entities']] for p in self.preds])
+            X = matricize([[e['label'] for e in p['entities']] for p in self.preds.values()])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
             centers = kmeans.cluster_centers_
             closest, _ = pairwise_distances_argmin_min(centers, X)
             return closest
+        
         def sample_most_common_vocab(size):
             # get the most common n-grams avoiding french stopwords
             vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
@@ -203,6 +201,7 @@ class AL_Simulator():
                 for i in most_diverse:
                     self.preds[i] = self.model.predict(self.pool[i])
                 return sorted(most_diverse, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
+            
         def uncertainty_mean_for_most_common_vocab(size):
             most_common = sample_most_common_vocab(50)
             if self.nb_iter <= 1 :
@@ -217,7 +216,6 @@ class AL_Simulator():
                 for i in most_common:
                     self.preds[i] = self.model.predict(self.pool[i])
                 return sorted(most_common, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
-        
         
         self.samplers = {
             "random": {
