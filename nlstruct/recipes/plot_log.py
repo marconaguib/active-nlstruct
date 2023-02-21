@@ -29,8 +29,11 @@ def plot_all(data, **kwargs):
     value_to_mean = kwargs.pop('value','score')
     plt.axhline(y=data[value_to_mean].max(), **kwargs, label='Best score')
 
+hue_order = list(dataset['xp_name'].unique())
+hue_order= sorted(hue_order,key=lambda x: 0 if x.startswith('random') else 1)
+
 g = sns.FacetGrid(data=dataset, col='corpus', row='type_f1',sharey=True, sharex=False)
-g.map_dataframe(plot_iterations, x= 'batch' if not args.word_count else 'word_count', y="score", hue='xp_name', hue_order=dataset['xp_name'].unique())
+g.map_dataframe(plot_iterations, x= 'batch' if not args.word_count else 'word_count', y="score", hue='xp_name', hue_order=hue_order)
 g.map_dataframe(plot_all,value='score',ls='--',c='black')
 g.add_legend(title='Selection strategy',)
 
