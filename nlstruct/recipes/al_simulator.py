@@ -21,7 +21,8 @@ from nlstruct.data_utils import mappable
 import random
 from statistics import median as real_median
 from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer
+from collections import Counter
 # import nltk
 # nltk.download('stopwords')
 # from nltk.corpus import stopwords
@@ -127,8 +128,6 @@ class AL_Simulator():
         self.dataset.val_data = []
         self.dataset.train_data = []
         self.queue = []
-        #pool needs to be a dict to be able to remove elements properly
-        #self.pool = {i:s for i,s in enumerate(self.pool)}
         self.nb_iter = 0
         self.gpus = gpus if not debug else 0
         self.tracker = CarbonTracker(epochs=11, epochs_before_pred=2, monitor_epochs=10)
@@ -172,6 +171,22 @@ class AL_Simulator():
                     self.too_similar.append(n)
             return res
         
+        def sample_diverse_vocab_iterative(size):
+            selected = []
+            vectorizer = TfidfVectorizer(ngram_range=(1, 2),)
+            X = vectorizer.fit_transform([d['text'] for d in self.pool])
+            #start with a random doc
+            selected.append(random.choice(range(len(self.pool))))
+            while len(selected)<size:
+                #sort the pool by distance to the selected docs
+                dists = pairwise_distances(X[selected], X, metric='cosine').ravel()
+                #sum the distances to the selected docs
+                dists = np.sum(dists.reshape(len(selected), -1), axis=0)
+                assert len(dists)==len(self.pool)
+                #select the farthest doc
+                selected.append(np.argmax(dists))
+            return selected
+        
         def sample_diverse_pred(size):
             X = matricize([[e['label'] for e in p['entities']] for p in self.preds.values()])
             kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
@@ -179,6 +194,43 @@ class AL_Simulator():
             closest, _ = pairwise_distances_argmin_min(centers, X)
             return closest
         
+        def sample_diverse_gold(size):
+            X = matricize([[e['label'] for e in d['entities']] for d in self.pool])
+            kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
+            centers = kmeans.cluster_centers_
+            closest, _ = pairwise_distances_argmin_min(centers, X)
+            return closest
+        
+        def sample_diverse_pred_iterative(size):
+            selected = []
+            pred_dict = self.preds.copy()
+            lists = [[e['label'] for e in p['entities']] for p in self.preds.values()]
+            number_of_labels = len(set([e['label'] for p in self.pool for e in p['entities']]))
+            def subset_multi_coverage(indices_a, list_b, number_of_values):
+                    subset = [list_b[i] for i in indices_a]
+                    counter = Counter([e for l in subset for e in l])
+                    return min(counter.values()) if len(counter) == number_of_values else 0
+            while len(selected)<size:
+                next_best_doc = max(pred_dict.keys(), key=lambda i:subset_multi_coverage([i]+selected, lists, number_of_labels))
+                selected.append(next_best_doc)
+                del pred_dict[next_best_doc]
+            return selected
+        
+        def sample_diverse_gold_iterative(size):
+            selected = []
+            pool_dict = {i:d for i,d in enumerate(self.pool)}
+            lists = [[e['label'] for e in d['entities']] for d in self.pool]
+            number_of_labels = len(set([e['label'] for d in self.pool for e in d['entities']]))
+            def subset_multi_coverage(indices_a, list_b, number_of_values):
+                    subset = [list_b[i] for i in indices_a]
+                    counter = Counter([e for l in subset for e in l])
+                    return min(counter.values()) if len(counter) == number_of_values else 0
+            while len(selected)<size:
+                next_best_doc = max(pool_dict.keys(), key=lambda i:subset_multi_coverage([i]+selected, lists, number_of_labels))
+                selected.append(next_best_doc)
+                del pool_dict[next_best_doc]
+            return selected
+                
         def sample_most_common_vocab(size):
             # get the most common n-grams avoiding french stopwords
             vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
@@ -203,7 +255,7 @@ class AL_Simulator():
                 for i in most_diverse:
                     self.preds[i] = self.model.predict(self.pool[i])
                 return sorted(most_diverse, key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size]
-            
+        
         def uncertainty_mean_for_most_common_vocab(size):
             most_common = sample_most_common_vocab(50)
             if self.nb_iter <= 1 :
@@ -213,7 +265,6 @@ class AL_Simulator():
                 print('Computing model predictions for most common vocab')
                 if self.gpus:
                     self.model.cuda()
-                #TODO: make sure this doesn't break preds order
                 self.preds={}
                 for i in most_common:
                     self.preds[i] = self.model.predict(self.pool[i])
@@ -240,6 +291,10 @@ class AL_Simulator():
                 'sample' : sample_diverse_vocab,
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
+            "diverse_vocab_iterative": {
+                'sample' : sample_diverse_vocab_iterative,
+                'visibility' : self.k + 10, 'predict_before' : False,
+            },
             "common_vocab": {
                 'sample' : sample_most_common_vocab,
                 'visibility' : self.k + 10, 'predict_before' : False,
@@ -248,6 +303,21 @@ class AL_Simulator():
                 'sample' : sample_diverse_pred,
                 'visibility' : 1,
                 'predict_before' : True,
+            },
+            "diverse_pred_iterative": {
+                'sample' : sample_diverse_pred_iterative,
+                'visibility' : 1,
+                'predict_before' : True,
+            },
+            "diverse_gold": {
+                'sample' : sample_diverse_gold,
+                'visibility' : self.k + 10,
+                'predict_before' : False
+            },
+            "diverse_gold_iterative": {
+                'sample' : sample_diverse_gold_iterative,
+                'visibility' : self.k + 10,
+                'predict_before' : False
             },
             "diverse_vocab_uncertain": {
                 'sample' : uncertainty_mean_for_most_diverse_vocab,
@@ -299,7 +369,7 @@ class AL_Simulator():
     def write_docselection(self):
             """Write the selected examples in a file"""
             if self.queue_entry_counter>self.k:
-                filename = f'docselection/{self.xp_name}_{self.queue_entry_counter-2}.txt'
+                filename = f'docselection/{self.xp_name}_{self.queue_entry_counter-self.k}.txt'
             else :
                 filename = f'docselection/{self.xp_name}_dev{self.queue_entry_counter}.txt'
             print(f'selected examples are written in {filename}')
