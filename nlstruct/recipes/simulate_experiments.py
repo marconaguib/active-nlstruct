@@ -26,9 +26,11 @@ for corpus in args.corpus_name_or_names:
                     entities_to_ignore = args.entities_to_ignore,
                     finetune_bert=True,
                     bert_name=args.bert_name,
+                    annotiter_size=10,
+                    k=1,
                     debug=args.debug,
                     )
             ignore_suffix = f"_no{''.join(args.entities_to_ignore).lower()}" if len(args.entities_to_ignore) else ''
             xp_name = f"{corpus}{ignore_suffix}/{strategy}seed{randseed}"
-            sim.run_simulation(num_iterations=20 if strategy=="random" else 10, max_steps=800, xp_name=xp_name)
+            sim.run_simulation(num_iterations=10, max_steps=800, xp_name=xp_name)
 
