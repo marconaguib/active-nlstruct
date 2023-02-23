@@ -123,7 +123,7 @@ class AL_Simulator():
                      if not [e['label'] for e in s['entities']] in [[t] for t in entities_to_remove_from_pool]
                    ]
             
-        self.too_similar = []
+        self.too_similar = set()
 
         self.dataset.val_data = []
         self.dataset.train_data = []
@@ -232,7 +232,7 @@ class AL_Simulator():
             return selected
                 
         def sample_most_common_vocab(size):
-            # get the most common n-grams avoiding french stopwords
+            # get the most common n-grams
             vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
             dists = pairwise_distances(X, metric='cosine')
@@ -240,7 +240,34 @@ class AL_Simulator():
             #get the indices of the docs with the lowest sum of distances excluding the ones too short
             closest = np.argsort([d for i,d in enumerate(dists_sums) if len(self.pool[i]['text'])>50])[:size]
             return closest
+        
+        def sample_most_common_vocab_alternative(size):
+            """Selects the documents having the most neighbors within a small radius"""
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform([d['text'] for d in self.pool])
+            dists = pairwise_distances(X)
+            np.fill_diagonal(dists, np.inf)
+            epsilon = 2.5*np.min(dists[dists>0])
             
+            neighbours = np.sum(dists<epsilon, axis=1)
+            for i in range(len(self.pool)):
+                if len(self.pool[i]['text'])<50:
+                    neighbours[i] = -1
+            #get the document with the most neighbors
+            res = []
+            for _ in range(size):
+                most_common = np.argmax(neighbours)
+                if neighbours[most_common]<=0:
+                    print("no more neighbours, choosing a larger epsilon")
+                    epsilon *= 1.5
+                res.append(most_common)
+                #too similar are the docs that are within epsilon distance from the most common
+                too_sim = [i for i in range(len(self.pool)) if dists[most_common,i]<epsilon]
+                neighbours[most_common] = -1
+                for i in too_sim:
+                    neighbours[i] = -1
+            return res
+        
         def uncertainty_mean_for_most_diverse_vocab(size):
             if self.nb_iter <= 1 :
                 most_diverse = sample_diverse_vocab_iterative(size)
@@ -297,6 +324,10 @@ class AL_Simulator():
             },
             "common_vocab": {
                 'sample' : sample_most_common_vocab,
+                'visibility' : self.k + 10, 'predict_before' : False,
+            },
+            "common_vocab_alternative": {
+                'sample' : sample_most_common_vocab_alternative,
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
             # "diverse_pred": {
