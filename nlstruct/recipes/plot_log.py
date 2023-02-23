@@ -8,6 +8,7 @@ sns.set_style("darkgrid", {"grid.color": ".6", "grid.linestyle": ":","grid.linef
 parser = argparse.ArgumentParser()
 parser.add_argument('-w','--word_count', action='store_true', help='plot word count instead of batch', default=False)
 parser.add_argument('-i','--input', type=str, help='input file',default='./common_log.csv')
+parser.add_argument('-e','--extended', action='store_true', help='plot the random strategy until the end', default=False)
 
 args = parser.parse_args()
 
@@ -21,7 +22,6 @@ dataset['word_count'] = dataset.groupby(['corpus','type_f1','xp_name','batch'])[
 #cumsum the word_count over every batch and seed
 dataset['word_count'] = dataset.groupby(['corpus','type_f1','xp_name','seed'])['word_count'].transform('cumsum')
 
-
 def plot_iterations(data,**kwargs):
     sns.lineplot(data=data.query('batch<=20'), **kwargs)
 
@@ -32,21 +32,25 @@ def plot_all(data, **kwargs):
 hue_order = list(dataset['xp_name'].unique())
 hue_order= sorted(hue_order,key=lambda x: 0 if x.startswith('random') else 1)
 
+#for each corpus, stop the random plot at where the other plots stop
+if args.word_count and not args.extended:
+    max_word_count = dataset.groupby(['corpus']).apply(lambda x: x.query('xp_name!="random"')['word_count'].max())
+    max_word_count = max_word_count*1.1
+    for c in max_word_count.index:
+        dataset = dataset.query('corpus!="{}" or word_count<={} or batch>20'.format(c,max_word_count[c]))
+
 g = sns.FacetGrid(data=dataset, col='corpus', row='type_f1',sharey=True, sharex=False)
 g.map_dataframe(plot_iterations, x= 'batch' if not args.word_count else 'word_count', y="score", hue='xp_name', hue_order=hue_order)
 g.map_dataframe(plot_all,value='score',ls='--',c='black')
 g.add_legend(title='Selection strategy',)
 
-#get the titles of each facet
+#set the titles of each facet
 g.set_titles(row_template='{row_name}', col_template='{col_name}')
 
 ax = plt.gca()
 ax.yaxis.set_major_locator(ticker.MultipleLocator(0.05))
 for ax in g.axes.flat:
     ax.set_ylim(0,1)
-    if args.word_count:
-        #ax.set_xlim(0,1250)
-        pass
     ax.set_xlabel('Iterations' if not args.word_count else 'Word count')
     ax.set_ylabel('F1 score')
     
