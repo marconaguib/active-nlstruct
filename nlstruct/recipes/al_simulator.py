@@ -21,7 +21,7 @@ from nlstruct.data_utils import mappable
 import random
 from statistics import median as real_median
 from sklearn.cluster import KMeans
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from collections import Counter
 # import nltk
 # nltk.download('stopwords')
@@ -231,15 +231,27 @@ class AL_Simulator():
                 del pool_dict[next_best_doc]
             return selected
                 
+        #def sample_most_common_vocab(size):
+        #    # get the most common n-grams
+        #    vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
+        #    X = vectorizer.fit_transform([d['text'] for d in self.pool])
+        #    dists = pairwise_distances(X, metric='cosine')
+        #    dists_sums = np.sum(dists, axis=1)
+        #    #get the indices of the docs with the lowest sum of distances excluding the ones too short
+        #    closest = np.argsort([d for i,d in enumerate(dists_sums) if len(self.pool[i]['text'])>50])[:size]
+        #    return closest
+
         def sample_most_common_vocab(size):
-            # get the most common n-grams
-            vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
+            # get the most common n-grams avoiding french stopwords
+            vectorizer = CountVectorizer(ngram_range=(1, 3),)
             X = vectorizer.fit_transform([d['text'] for d in self.pool])
-            dists = pairwise_distances(X, metric='cosine')
-            dists_sums = np.sum(dists, axis=1)
-            #get the indices of the docs with the lowest sum of distances excluding the ones too short
-            closest = np.argsort([d for i,d in enumerate(dists_sums) if len(self.pool[i]['text'])>50])[:size]
-            return closest
+            counts = np.asarray(X.sum(axis=0)).ravel()
+            most_common_ngrams = np.argsort(counts)[::-1][:100]
+            # for each document, get the number of n-grams that are in the most common n-grams
+            X = X[:,most_common_ngrams]
+            counts = np.asarray(X.sum(axis=1)).ravel()
+            most_common = np.argsort(counts)[::-1][:size]
+            return most_common
         
         def sample_most_common_vocab_alternative(size):
             """Selects the documents having the most neighbors within a small radius"""
