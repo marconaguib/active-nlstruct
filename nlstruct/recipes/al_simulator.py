@@ -76,11 +76,31 @@ class AL_Simulator():
         #         e['label'] = attribute_labels
         #     return doc
 
+        @mappable
+        def substitution_merlot(doc):
+            substitutions = {'Anatomy':'ANAT',
+                            'Chemicals_Drugs':'CHEM', 
+                            'Disorder':'DISO',
+                            'SignOrSymptom':'DISO','Devices':'DEVI',
+                            'LivingBeings':'LIVB', 'Persons':'LIVB',
+                            'BiologicalProcessOrFunction':'PHEN',
+                            'MedicalProcedure':'PROC',
+                            'Temporal':'TEMP',
+                            'Dosage':'DOSE', 'Strength': 'DOSE', 'AdministrationRoute':'MODE',
+                            'DrugForm': 'MODE', 
+                            'Measurement':'MEAS' 
+                            }
+            for e in doc['entities']:
+                e['label'] = substitutions.get(e['label'], e['label'])
+            return doc
+        
         if not isinstance(dataset_name, dict):
             raise Exception("dataset must be a dict or a str")
         self.dataset = BRATDataset(
             **dataset_name,
             #preprocess_fn=prepare_data,
+            preprocess_fn=substitution_merlot,
+           
         )
         self.word_regex = BASE_WORD_REGEX
         self.sentence_split_regex = BASE_SENTENCE_REGEX
@@ -101,8 +121,10 @@ class AL_Simulator():
         
         if len(self.dataset.val_data)>0:
             print("Specifying the validation dataset size is useless, it's determined by k in AL_Simulator.")
+       
 
-        all_docs = self.dataset.val_data + self.dataset.train_data
+        # all_docs = self.dataset.val_data + self.dataset.train_data
+        all_docs = self.dataset.train_data
         self.pool = []
         if sentencize_pool:
             for d in all_docs:

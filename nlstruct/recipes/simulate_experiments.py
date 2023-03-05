@@ -22,7 +22,7 @@ for corpus in args.corpus_name_or_names:
                     selection_strategy=strategy, al_seed=randseed,seed=randseed,
                     and_train_on_all_data=not any([int(os.path.basename(fn)[:-5].split('_')[-1])>10
                                            for fn in glob.glob(os.path.join('checkpoints',corpus,'*json'))]),
-                    entities_to_remove_from_pool = ['papieralettre','signature',],
+                    entities_to_remove_from_pool = ['papieralettre','signature','Assertion','Aspect'],
                     entities_to_ignore = args.entities_to_ignore,
                     finetune_bert=True,
                     bert_name=args.bert_name,
