@@ -352,7 +352,7 @@ class AL_Simulator():
             #     'sample' : sample_diverse_vocab,
             #     'visibility' : self.k + 10, 'predict_before' : False,
             # },
-            "diverse_vocab_iterative": {
+            "diverse_vocab": {
                 'sample' : sample_diverse_vocab_iterative,
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
@@ -369,7 +369,7 @@ class AL_Simulator():
             #     'visibility' : 1,
             #     'predict_before' : True,
             # },
-            "diverse_pred_iterative": {
+            "diverse_pred": {
                 'sample' : sample_diverse_pred_iterative,
                 'visibility' : 1,
                 'predict_before' : True,
@@ -379,7 +379,7 @@ class AL_Simulator():
             #     'visibility' : self.k + 10,
             #     'predict_before' : False
             # },
-            "diverse_gold_iterative": {
+            "diverse_gold": {
                 'sample' : sample_diverse_gold_iterative,
                 'visibility' : self.k + 10,
                 'predict_before' : False
