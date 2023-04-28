@@ -24,12 +24,36 @@ dataset['word_count'] = dataset.groupby(['corpus','type_f1','xp_name','seed'])['
 
 dataset = dataset.query('type_f1!="min"')
 
+#for each corpus, xp_name and type_f1, get the score at 1000 word count and put them in a new dataframe
+rel_perfs = pd.DataFrame(columns=['corpus','type_f1','xp_name','score_at_1000'])
+for c, corpus_data in dataset.groupby(['corpus']):
+    max_score_by_type = corpus_data.groupby('type_f1')['score'].max()
+    print(c)
+    print(max_score_by_type)
+    for g,xp_type_data in corpus_data.groupby(['xp_name','type_f1']):
+        #get the lines where the word count is > 1000
+        if xp_type_data.query('word_count>1000').empty:
+            score = pd.NA
+        else :
+            xp_type_data['score_mean'] = xp_type_data.groupby('batch')['score'].transform('mean')
+            idx = xp_type_data.query('word_count>1000').index[0]
+            score = xp_type_data.loc[idx,'score_mean']
+        score_ratio = round(score/max_score_by_type[g[1]],2) if score is not pd.NA else pd.NA
+        rel_perfs = pd.concat([rel_perfs,pd.DataFrame({'corpus':[c],'type_f1':[g[1]],'xp_name':[g[0]],'score_at_1000':[score_ratio]})],ignore_index=True)
+        
+corpus_order = ['merlot', 'emea', 'medline', 'e3c_clean']
+rel_perfs['corpus'] = pd.Categorical(rel_perfs['corpus'], categories=corpus_order, ordered=True)
+dataset['corpus'] = pd.Categorical(dataset['corpus'], categories=corpus_order, ordered=True)
+rel_perfs.sort_values(['xp_name','corpus','type_f1'], inplace=True)
+print(rel_perfs)
+
+
 def plot_iterations(data,**kwargs):
     sns.lineplot(data=data.query('batch<=20'), **kwargs)
 
 def plot_all(data, **kwargs):
     value_to_mean = kwargs.pop('value','score')
-    plt.axhline(y=data[value_to_mean].max(), **kwargs, label='Best score')
+    plt.axhline(y=data[value_to_mean].max(), **kwargs, label='Score obtenu en utilisant toutes les données')
 
 hue_order = list(dataset['xp_name'].unique())
 hue_order= sorted(hue_order,key=lambda x: 0 if x.startswith('random') else 1)
@@ -50,15 +74,19 @@ g.add_legend(title='Stratégie de sélection',bbox_to_anchor=(0,0,1,0.5),loc='lo
 g.fig.tight_layout()
 
 #set the titles of each facet
-g.set_titles(row_template='f1_{row_name}', col_template='{col_name}')
-
+g.set_titles(template='{col_name}')
 
 ax = plt.gca()
 ax.yaxis.set_major_locator(ticker.MultipleLocator(0.05))
 for ax in g.axes.flat:
     ax.set_ylim(0,1)
-    ax.set_xlabel('Iterations' if not args.word_count else 'Word count')
-    ax.set_ylabel('F1 score')
+    if ax in g.axes[0]:
+        ax.set_ylabel('f1_micro')
+        ax.set_xlabel('')
+    else:
+        ax.set_ylabel('f1_macro')
+        ax.set_title('')
+        ax.set_xlabel('Iterations' if not args.word_count else 'Nombre de mots')
 
 #fix borders
 fig = plt.gcf()
