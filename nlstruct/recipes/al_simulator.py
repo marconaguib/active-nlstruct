@@ -13,7 +13,6 @@ from rich_logger import RichTableLogger
 import pandas as pd
 from nlstruct import BRATDataset, MetricsCollection, get_instance, get_config, InformationExtractor
 from nlstruct.checkpoint import ModelCheckpoint, AlreadyRunningException
-from al_utils import matricize
 from carbontracker.tracker import CarbonTracker
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from nlstruct.data_utils import sentencize
@@ -23,9 +22,6 @@ from statistics import median as real_median
 from sklearn.cluster import KMeans
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
 from collections import Counter
-# import nltk
-# nltk.download('stopwords')
-# from nltk.corpus import stopwords
 
 
 shared_cache = {}
@@ -169,30 +165,7 @@ class AL_Simulator():
             "uncertainty_max": lambda i:maximum([1-p['confidence'] for p in self.preds[i]['entities']]),
             "pred_num": lambda i:len(self.preds[i]['entities']),
         }
-        
-        # def sample_diverse_vocab(size):
-        #     vectorizer = TfidfVectorizer(ngram_range=(1, 2),)
-        #     #exclude docs that are too similar to the ones already in the queue
-        #     X = vectorizer.fit_transform([d['text'] for i,d in enumerate(self.pool) if i not in self.too_similar])
-            
-        #     kmeans = KMeans(n_clusters=2*size, random_state=self.al_seed).fit(X)
-        #     labels = random.sample(list(set(kmeans.labels_)), size)
-        #     #res = [random.choice([i for i,l in enumerate(kmeans.labels_) if l==label and len(self.pool[i]['text'])>5]) for label in labels]
-        #     res = []
-        #     while len(res)<size:
-        #         label = labels[len(res)]
-        #         relevant_docs_in_cluster = [i for i,l in enumerate(kmeans.labels_) if l==label and len(self.pool[i]['text'])>5]
-        #         if len(relevant_docs_in_cluster):
-        #             res.append(random.choice(relevant_docs_in_cluster))
-        #     for i in res:
-        #         #compute k as 0.5 percent of the pool size
-        #         k = int(0.005*len(self.pool))
-        #         dists = pairwise_distances(X[i], X, metric='cosine').ravel()
-        #         nearest = np.argsort(dists)[:k]
-        #         for n in nearest:
-        #             self.too_similar.append(n)
-        #     return res
-        
+             
         def sample_diverse_vocab_iterative(size):
             selected = []
             vectorizer = TfidfVectorizer(ngram_range=(1, 2),)
@@ -208,20 +181,6 @@ class AL_Simulator():
                 #select the farthest doc
                 selected.append(np.argmax(dists))
             return selected
-        
-        # def sample_diverse_pred(size):
-        #     X = matricize([[e['label'] for e in p['entities']] for p in self.preds.values()])
-        #     kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-        #     centers = kmeans.cluster_centers_
-        #     closest, _ = pairwise_distances_argmin_min(centers, X)
-        #     return closest
-        
-        # def sample_diverse_gold(size):
-        #     X = matricize([[e['label'] for e in d['entities']] for d in self.pool])
-        #     kmeans = KMeans(n_clusters=size, random_state=self.al_seed).fit(X)
-        #     centers = kmeans.cluster_centers_
-        #     closest, _ = pairwise_distances_argmin_min(centers, X)
-        #     return closest
         
         def sample_diverse_pred_iterative(size):
             selected = []
@@ -253,16 +212,6 @@ class AL_Simulator():
                 del pool_dict[next_best_doc]
             return selected
                 
-        #def sample_most_common_vocab(size):
-        #    # get the most common n-grams
-        #    vectorizer = TfidfVectorizer(ngram_range=(1, 3),)
-        #    X = vectorizer.fit_transform([d['text'] for d in self.pool])
-        #    dists = pairwise_distances(X, metric='cosine')
-        #    dists_sums = np.sum(dists, axis=1)
-        #    #get the indices of the docs with the lowest sum of distances excluding the ones too short
-        #    closest = np.argsort([d for i,d in enumerate(dists_sums) if len(self.pool[i]['text'])>50])[:size]
-        #    return closest
-
         def sample_most_common_vocab(size):
             # get the most common n-grams avoiding french stopwords
             vectorizer = CountVectorizer(ngram_range=(1, 3),)
@@ -348,10 +297,6 @@ class AL_Simulator():
                 'sample' : lambda size:sorted(range(len(self.pool)), key=lambda i:len(self.pool[i]['text']), reverse=True)[:size],
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
-            # "diverse_vocab": {
-            #     'sample' : sample_diverse_vocab,
-            #     'visibility' : self.k + 10, 'predict_before' : False,
-            # },
             "diverse_vocab": {
                 'sample' : sample_diverse_vocab_iterative,
                 'visibility' : self.k + 10, 'predict_before' : False,
@@ -364,21 +309,11 @@ class AL_Simulator():
                 'sample' : sample_most_common_vocab_alternative,
                 'visibility' : self.k + 10, 'predict_before' : False,
             },
-            # "diverse_pred": {
-            #     'sample' : sample_diverse_pred,
-            #     'visibility' : 1,
-            #     'predict_before' : True,
-            # },
             "diverse_pred": {
                 'sample' : sample_diverse_pred_iterative,
                 'visibility' : 1,
                 'predict_before' : True,
             },
-            # "diverse_gold": {
-            #     'sample' : sample_diverse_gold,
-            #     'visibility' : self.k + 10,
-            #     'predict_before' : False
-            # },
             "diverse_gold": {
                 'sample' : sample_diverse_gold_iterative,
                 'visibility' : self.k + 10,
@@ -394,11 +329,7 @@ class AL_Simulator():
                 'visibility' : 1,
                 'predict_before' : True,
             },
-            # "common_vocab_then_uncertain": {
-            #     'sample' : uncertainty_mean_for_most_common_vocab if self.nb_iter <3 else lambda size : sorted(range(len(self.pool)), key=pred_scorers["uncertainty_mean_min3"], reverse=True)[:size],
-            #     'visibility' : 1,
-            #     'predict_before' : True,
-            # },
+            
         #add generic scorers
         } | {
             scorer : {
