@@ -1,6 +1,4 @@
-This repo is a fork of the excellent [NLStruct](https://github.com/percevalw/nlstruct) repo by Perceval Wajsbürt.
-This fork adds Active-Learning-specific recipes that can be found in the [recipes](/nlstruct/recipes) folder.
-It is the support for my paper [Stratégies d'apprentissage actif pour la reconnaissance d'entités nommées en français]() (in French).
+This repo is a fork of the excellent [NLStruct](https://github.com/percevalw/nlstruct) repo by Perceval Wajsbürt, I have left the original README below. This fork adds Active-Learning-specific recipes that can be found in the [recipes](/nlstruct/recipes) folder. It is the support for my paper [Stratégies d'apprentissage actif pour la reconnaissance d'entités nommées en français]() (in French).
 
 # NLStruct
 
