@@ -9,3 +9,4 @@ from nlstruct.datasets.i2b2_temporal import I2B2Temporal
 
 from nlstruct.datasets.umls import UMLS
 from nlstruct.datasets.medic import MEDIC
+from nlstruct.datasets.huggingface import HuggingfaceNERDataset
