@@ -1,3 +1,4 @@
+import os
 from nlstruct.datasets.base import NERDataset
 from datasets import load_dataset, load_from_disk
 
@@ -53,9 +54,9 @@ class HuggingfaceNERDataset(NERDataset):
     def extract(self, dataset_name, subset, tag_map, doc_id_colname, words_colname, ner_tags_colname):
         try :
             if self.load_from_disk:
-                self.dataset = load_dataset(dataset_name, subset)
+                self.dataset = load_from_disk(os.path.join(dataset_name, subset))
             else:
-                self.dataset = load_from_disk(f'$WORK/data/{dataset_name}/{subset}') 
+                self.dataset = load_dataset(dataset_name, subset)
         except ValueError:
             raise ValueError(f"Dataset {dataset_name} does not exist. Please check the name of the dataset.")
         train_data = load_from_hf(self.dataset["train"], tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
