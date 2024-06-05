@@ -386,7 +386,10 @@ class InformationExtractor(PytorchLightningBase):
         self.log("bert_lr", self.optimizers().param_groups[2]["lr"])
         self.log("max_grad", max_grad)
 
-    def on_epoch_end(self):
+    def on_training_epoch_end(self):
+        self.log("duration", time.time() - self._time)
+    
+    def on_validation_epoch_end(self):
         self.log("duration", time.time() - self._time)
 
     def validation_step(self, inputs, batch_idx):

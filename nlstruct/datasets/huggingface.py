@@ -46,23 +46,25 @@ def load_from_hf(dataset, tag_map, doc_id_colname, words_colname='words', ner_ta
     return examples
 
 class HuggingfaceNERDataset(NERDataset):
-    def __init__(self, dataset_name: str, subset: str, tag_map: dict, preprocess_fn=None, doc_id_colname='doc_id', words_colname='words', ner_tags_colname='ner_tags', load_from_disk=False):
+    def __init__(self, dataset_name: str, tag_map: dict, preprocess_fn=None, doc_id_colname='doc_id', words_colname='words', ner_tags_colname='ner_tags', load_from_disk=False):
         self.load_from_disk = load_from_disk
-        train_data, val_data, test_data = self.extract(dataset_name, subset, tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
+        train_data, val_data, test_data = self.extract(dataset_name, tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
         super().__init__(train_data, val_data, test_data, preprocess_fn=preprocess_fn)
     
-    def extract(self, dataset_name, subset, tag_map, doc_id_colname, words_colname, ner_tags_colname):
+    def extract(self, dataset_name, tag_map, doc_id_colname, words_colname, ner_tags_colname):
         try :
             if self.load_from_disk:
-                self.dataset = load_from_disk(os.path.join(dataset_name, subset))
+                self.dataset = load_from_disk(dataset_name)
             else:
-                self.dataset = load_dataset(dataset_name, subset)
+                try:
+                    base = os.path.basename(dataset_name)
+                    dir = os.path.dirname(dataset_name)
+                    self.dataset = load_dataset(dir, base)
+                except:
+                    self.dataset = load_dataset(dataset_name)
         except ValueError:
             raise ValueError(f"Dataset {dataset_name} does not exist. Please check the name of the dataset.")
         train_data = load_from_hf(self.dataset["train"], tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
         test_data = load_from_hf(self.dataset["test"], tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
         val_data = load_from_hf([], tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
         return train_data, val_data, test_data
-        
-    
-

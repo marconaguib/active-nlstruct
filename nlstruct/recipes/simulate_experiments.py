@@ -7,15 +7,15 @@ import argparse
 import glob
 
 parser = argparse.ArgumentParser()
-parser.add_argument('corpus_name_or_names', type=str, nargs='+', help='names of the corpora to do the experiment on',default=[])
+parser.add_argument('corpus_names', type=str, nargs='+', help='names of the corpora to do the experiment on',default=[])
 parser.add_argument('-r','--random_seeds', type=int, nargs='+', help='random seeds', default=[1])
 parser.add_argument('-s','--strategies', type=str, nargs='+', help='strategies to apply',default=[])
-parser.add_argument('-b','--bert_name', type=str, help='bert name',default="camembert-base")
+parser.add_argument('-b','--bert_name', type=str, help='bert name',default="camembert/camembert-large")
 parser.add_argument('-i','--entities_to_ignore', type=str, nargs='+', help='', default=[])
 parser.add_argument('-d','--debug', action='store_true', help='debug mode', default=False)
 args = parser.parse_args()
-assert all([os.path.exists(name) for name in args.corpus_name_or_names])
-for corpus in args.corpus_name_or_names:
+assert all([os.path.exists(name) for name in args.corpus_names])
+for corpus in args.corpus_names:
     for strategy in args.strategies :
         for randseed in args.random_seeds if strategy!='length' else args.random_seeds[:1]:
             sim = AL_Simulator(dataset_name={"train": f"{corpus}/training","test": f"{corpus}/test"}, 

@@ -2,7 +2,7 @@ import functools
 import random
 import re
 import math
-from collections import defaultdict, Sequence
+from collections import defaultdict#, Sequence
 from collections import namedtuple
 from contextlib import contextmanager
 from itertools import zip_longest
@@ -47,7 +47,8 @@ def get_nested_properties(nested, dtype=None):
 
     def explore(obj):
         nonlocal dtype
-        if isinstance(obj, Sequence) and not isinstance(obj, str):
+        #if isinstance(obj, Sequence) and not isinstance(obj, str):
+        if isinstance(obj, list) or isinstance(obj, tuple):
             if len(obj) == 0:
                 return 1, True
             max_depth = -1
