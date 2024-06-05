@@ -639,7 +639,7 @@ class AL_Simulator():
             # Learning rates
             main_lr=lr,
             fast_lr=lr,
-            bert_lr=5e-5,
+            bert_lr=3e-5,
 
             # Optimizer, can be class or str
             optimizer_cls="transformers.AdamW",

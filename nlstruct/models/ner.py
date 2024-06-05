@@ -11,6 +11,7 @@ from nlstruct.data_utils import mappable, huggingface_tokenize, regex_tokenize, 
 from nlstruct.models.common import Vocabulary, Contextualizer
 from nlstruct.registry import register, get_instance
 from nlstruct.torch_utils import list_factorize, batch_to_tensors
+from transformers import AddedToken
 
 
 def slice_tokenization_output(tokens, begin, end, insert_before=None, insert_after=None):
@@ -120,6 +121,7 @@ class NERPreprocessor(torch.nn.Module):
         assert empty_entities in ("raise", "drop")
         assert large_sentences in ("equal-split", "max-split", "raise")
         self.tokenizer = transformers.AutoTokenizer.from_pretrained(bert_name) if bert_name is not None else None
+        #self.tokenizer = transformers.AutoTokenizer.from_pretrained("roberta-base") if bert_name is not None else None
         self.sentence_split_regex = sentence_split_regex
         self.split_into_multiple_samples = split_into_multiple_samples
         self.sentence_balance_chars = sentence_balance_chars
@@ -378,11 +380,16 @@ class NERPreprocessor(torch.nn.Module):
             sentence_text = text[begin:end]
             if not sentence_text.strip():
                 continue
-
+            _bos_token = getattr(self.tokenizer, '_bos_token', None)
+            if isinstance(_bos_token, AddedToken):
+                self.tokenizer._bos_token = "<s>"
+            _eos_token = getattr(self.tokenizer, '_eos_token', None)
+            if isinstance(_eos_token, AddedToken):
+                self.tokenizer._eos_token = "<\s>"
+            
             bert_tokens = slice_tokenization_output(full_doc_bert_tokens, begin, end,
                                                     (getattr(self.tokenizer, '_bos_token', None) or self.tokenizer.special_tokens_map.get('cls_token', None)) if self.tokenizer is not None else None,
                                                     (getattr(self.tokenizer, '_eos_token', None) or self.tokenizer.special_tokens_map.get('sep_token', None)) if self.tokenizer is not None else None)
-
             if (
                   (self.min_tokens is not None and len(bert_tokens["text"]) < self.min_tokens) or
                   (self.max_tokens is not None and len(bert_tokens["text"]) < self.max_tokens and (
