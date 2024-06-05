@@ -393,7 +393,15 @@ def split_spans(span_begins, span_ends, token_begins, token_ends):
            ((token_begins > span_begins) & (token_ends < span_ends)) |
            ((token_begins == span_begins) & (token_ends == span_ends)))
     )
-    token_span_overlap = np.concatenate([token_span_overlap, np.zeros_like(token_span_overlap[:, [-1]])], axis=1)
+
+    #token_span_overlap = np.concatenate([token_span_overlap, np.zeros_like(token_span_overlap[:, [-1]])], axis=1)
+    #this sometimes errors out "index -1 is out of bounds for axis 1 with size 0"
+    #to avoid this, we do the following:
+    if token_span_overlap.shape[1] == 0:
+        token_span_overlap = np.zeros((token_span_overlap.shape[0], 1), dtype=bool)
+    else:
+        token_span_overlap = np.concatenate([token_span_overlap, np.zeros_like(token_span_overlap[:, [-1]])], axis=1)
+
 
     next_token_span_overlap = np.roll(token_span_overlap, 1, 1)
     next_token_span_overlap[:, 0] = 0

@@ -121,13 +121,13 @@ class DocumentEntityMetric(Metric):
         self.add_label_specific_metrics = add_label_specific_metrics
         self.binarize_label_threshold = float(binarize_label_threshold) if binarize_label_threshold is not False else binarize_label_threshold
         self.binarize_tag_threshold = float(binarize_tag_threshold) if binarize_tag_threshold is not False else binarize_tag_threshold
-        self.add_state("true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state("pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
-        self.add_state("gold_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+        self.add_state("true_positive", default=torch.tensor(0., device="cuda"), dist_reduce_fx="sum")
+        self.add_state("pred_count", default=torch.tensor(0., device="cuda"), dist_reduce_fx="sum")
+        self.add_state("gold_count", default=torch.tensor(0., device="cuda"), dist_reduce_fx="sum")
         for label in self.add_label_specific_metrics:
-           self.add_state(f"{label}_true_positive", default=torch.tensor(0.), dist_reduce_fx="sum")
-           self.add_state(f"{label}_pred_count", default=torch.tensor(0.), dist_reduce_fx="sum")
-           self.add_state(f"{label}_gold_count", default=torch.tensor(0.), dist_reduce_fx="sum")
+           self.add_state(f"{label}_true_positive", default=torch.tensor(0., device="cuda"), dist_reduce_fx="sum")
+           self.add_state(f"{label}_pred_count", default=torch.tensor(0., device="cuda"), dist_reduce_fx="sum")
+           self.add_state(f"{label}_gold_count", default=torch.tensor(0., device="cuda"), dist_reduce_fx="sum")
 
     def increment(self, name, by=1):
         """Increments a counter specified by the 'name' argument."""
@@ -152,7 +152,7 @@ class DocumentEntityMetric(Metric):
                     self.increment(f"{label}_gold_count", by=gc)
 
     def compare_two_samples(self, pred_doc, gold_doc, return_match_scores=False):
-        assert pred_doc["text"] == gold_doc["text"]
+        assert pred_doc["text"] == gold_doc["text"], f'Mismatch:\n{pred_doc["text"]}\nvs.\n{gold_doc["text"]}'
         pred_doc_entities = list(pred_doc["entities"])
         gold_doc_entities = list(gold_doc["entities"])
 
@@ -291,9 +291,16 @@ class DocumentEntityMetric(Metric):
                 score_per_label[ent_label] += effective_score
                 match_scores[:, gold_idx] = -1
                 match_scores[pred_idx, :] = -1
-        
-        return {l : (float(score_per_label[l]), pred_values.count(l), gold_values.count(l))
-                    for l in all_entity_labels}
+        on_cuda = True
+        # return {l : (float(score_per_label[l]), pred_values.count(l), gold_values.count(l))
+        #             for l in all_entity_labels}
+        if on_cuda :
+            #make sure to return a tuple of tensors
+            return {l : (torch.tensor(score_per_label[l]).cuda(), torch.tensor(pred_values.count(l)).cuda(), torch.tensor(gold_values.count(l)).cuda())
+                        for l in all_entity_labels}
+        else :
+            return {l : (torch.tensor(score_per_label[l]), torch.tensor(pred_values.count(l)), torch.tensor(gold_values.count(l)))
+                        for l in all_entity_labels}
 
     def compute(self):
         """

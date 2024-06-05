@@ -375,7 +375,7 @@ class InformationExtractor(PytorchLightningBase):
     def on_train_epoch_start(self):
         self._time = time.time()
 
-    def training_epoch_end(self, outputs):
+    def on_train_epoch_end(self, outputs):
         total = sum(output["count"] for output in outputs)
         max_grad = max(output["max_grad"] for output in outputs)
         for key in outputs[0].keys():
@@ -403,7 +403,7 @@ class InformationExtractor(PytorchLightningBase):
         for metric in self.metrics.values():
             metric.reset()
 
-    def validation_epoch_end(self, outputs):
+    def on_validation_epoch_end(self):
         self.log_dict({
             ("val_{}_{}".format(name, field) if field else "val_{}".format(name, )): value
             for name, metric in self.metrics.items()
