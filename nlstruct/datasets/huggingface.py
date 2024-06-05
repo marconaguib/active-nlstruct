@@ -68,3 +68,4 @@ class HuggingfaceNERDataset(NERDataset):
         test_data = load_from_hf(self.dataset["test"], tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
         val_data = load_from_hf([], tag_map, doc_id_colname=doc_id_colname, words_colname=words_colname, ner_tags_colname=ner_tags_colname)
         return train_data, val_data, test_data
+    
